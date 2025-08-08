@@ -1,8 +1,6 @@
 # 🤖 Telegram Code Analyzer
 
-**Ultra-minimalist Telegram bot** that provides codebase analysis using Claude Code CLI. Ask questions through Telegram and get markdown analysis files.
-
-> **Radically simplified**: From 2000+ lines to ~400 lines following KISS principles and Occam's razor.
+**Minimalist Telegram bot** that provides codebase analysis using Claude Code CLI. Ask questions through Telegram and get markdown analysis files.
 
 ## 🎯 What it does
 
@@ -235,35 +233,9 @@ While the project is designed to run directly on the host for simplicity, you ca
 
 **ULTRA-MINIMALIST APPROACH**
 
-This project was radically simplified after critical code review:
-
 ✅ **KISS over complexity** - Simple functions over classes/patterns  
 ✅ **Delete over add** - Remove code rather than add features  
 ✅ **Plain over fancy** - Direct solutions over abstractions  
 ✅ **Occam's Razor** - Simplest solution that works  
 
 **Before adding anything**: Ask "Is this really necessary for 5 users?"
-
-## 🏆 Simplification Results
-
-- **1,757 lines removed** (overengineering eliminated)
-- **5 files deleted** (DI container, strategies, interfaces, guards, error handlers)  
-- **32% code reduction** while maintaining functionality
-- **Zero enterprise patterns** for simple bot use case
-
-## 📊 Architecture Evolution
-
-| Metric | Before | After | Improvement |
-|--------|--------|--------|-------------|
-| Files | 15+ | 8 | -47% |
-| Lines | 2000+ | ~1200 | -40% |
-| Complexity | Enterprise | Simple | -90% |
-| Patterns | Many | None | -100% |
-
-## License
-
-MIT License - see LICENSE file for details.
-
----
-
-**Ready to analyze your code?** Set up the bot, send it a question, and discover insights about your codebase through natural conversation.
