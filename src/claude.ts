@@ -3,9 +3,17 @@
  */
 import { spawn } from "child_process";
 import { readFile, stat } from "fs/promises";
-import { join } from "path";
+import { join, basename } from "path";
 import type { AnalysisResult } from "./types.js";
 import { saveAnalysis } from "./utils.js";
+import {
+  ClaudeError,
+  ClaudeErrorSubType,
+  SystemError,
+  SystemErrorSubType,
+  FileSystemError,
+  FileOperation,
+} from "./errors/index.js";
 
 type SimpleError = {
   message?: string;
@@ -21,7 +29,10 @@ export async function executeClaudeAnalysis(
   const timeout = parseInt(process.env["CLAUDE_TIMEOUT"] || "300000", 10);
 
   if (!projectPath) {
-    throw new Error("PROJECT_PATH not specified in environment variables");
+    throw new SystemError(
+      "PROJECT_PATH not specified in environment variables",
+      SystemErrorSubType.CONFIG
+    );
   }
 
   console.log(`Starting Claude analysis: "${question.substring(0, 100)}..."`);
@@ -36,7 +47,18 @@ export async function executeClaudeAnalysis(
   } catch (error) {
     const duration = Date.now() - startTime;
     console.error(`Analysis failed after ${duration}ms:`, error);
-    throw new Error(`Claude analysis failed: ${getErrorMessage(error)}`);
+
+    if (error instanceof ClaudeError) {
+      throw error;
+    }
+
+    const message = `Claude analysis failed: ${getErrorMessage(error)}`;
+    throw new ClaudeError(
+      message,
+      ClaudeErrorSubType.EXECUTION,
+      { duration },
+      error instanceof Error ? error : undefined
+    );
   }
 }
 
@@ -46,7 +68,13 @@ async function loadPrompt(projectPath: string): Promise<string> {
   try {
     return await readFile(promptPath, "utf-8");
   } catch (error) {
-    throw new Error(`Failed to load prompt file: ${promptPath}`);
+    throw new FileSystemError(
+      "Failed to load prompt file",
+      FileOperation.READ,
+      promptPath,
+      undefined,
+      error instanceof Error ? error : undefined
+    );
   }
 }
 
@@ -56,7 +84,7 @@ async function runClaudeCommand(
   timeout: number
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const process = spawn(
+    const childProcess = spawn(
       "npx",
       [
         "@anthropic-ai/claude-code",
@@ -72,7 +100,6 @@ async function runClaudeCommand(
       {
         cwd: projectPath,
         stdio: ["pipe", "pipe", "pipe"],
-        timeout: timeout,
       }
     );
 
@@ -83,20 +110,26 @@ async function runClaudeCommand(
     const timeoutId = setTimeout(() => {
       if (!finished) {
         finished = true;
-        process.kill("SIGTERM");
-        reject(new Error(`Process timeout after ${timeout}ms`));
+        childProcess.kill("SIGTERM");
+        reject(
+          new ClaudeError(
+            `Process timeout after ${timeout}ms`,
+            ClaudeErrorSubType.TIMEOUT,
+            { timeout }
+          )
+        );
       }
     }, timeout);
 
-    process.stdout?.on("data", (data) => {
+    childProcess.stdout?.on("data", (data: Buffer) => {
       stdout += data.toString();
     });
 
-    process.stderr?.on("data", (data) => {
+    childProcess.stderr?.on("data", (data: Buffer) => {
       stderr += data.toString();
     });
 
-    process.on("close", (code) => {
+    childProcess.on("close", (code) => {
       if (!finished) {
         finished = true;
         clearTimeout(timeoutId);
@@ -104,34 +137,77 @@ async function runClaudeCommand(
         if (code === 0 && stdout.trim()) {
           resolve(stdout);
         } else {
+          const errorSubType = determineClaudeErrorSubType(stderr, code);
           reject(
-            new Error(`Process exited with code ${code}. Stderr: ${stderr}`)
+            new ClaudeError(
+              `Process exited with code ${code}. Stderr: ${stderr}`,
+              errorSubType,
+              { exitCode: code, stderr }
+            )
           );
         }
       }
     });
 
-    process.on("error", (error) => {
+    childProcess.on("error", (error) => {
       if (!finished) {
         finished = true;
         clearTimeout(timeoutId);
-        reject(error);
+        reject(
+          new ClaudeError(
+            `Failed to spawn Claude process: ${error.message}`,
+            ClaudeErrorSubType.UNAVAILABLE,
+            undefined,
+            error
+          )
+        );
       }
     });
 
-    if (process.stdin) {
+    if (childProcess.stdin) {
       try {
-        process.stdin.write(promptContent);
-        process.stdin.end();
+        childProcess.stdin.write(promptContent);
+        childProcess.stdin.end();
       } catch (error) {
         if (!finished) {
           finished = true;
           clearTimeout(timeoutId);
-          reject(error);
+          reject(
+            new ClaudeError(
+              "Failed to write to Claude process stdin",
+              ClaudeErrorSubType.EXECUTION,
+              undefined,
+              error instanceof Error ? error : undefined
+            )
+          );
         }
       }
     }
   });
+}
+
+function determineClaudeErrorSubType(
+  stderr: string,
+  exitCode: number | null
+): ClaudeErrorSubType {
+  const stderrLower = stderr.toLowerCase();
+
+  if (stderrLower.includes("not found") || stderrLower.includes("enoent")) {
+    return ClaudeErrorSubType.UNAVAILABLE;
+  }
+
+  if (
+    stderrLower.includes("project") &&
+    (stderrLower.includes("not found") || stderrLower.includes("does not exist"))
+  ) {
+    return ClaudeErrorSubType.PROJECT_NOT_FOUND;
+  }
+
+  if (exitCode === 127) {
+    return ClaudeErrorSubType.UNAVAILABLE;
+  }
+
+  return ClaudeErrorSubType.EXECUTION;
 }
 
 async function saveResult(
@@ -151,7 +227,7 @@ async function saveResult(
   return {
     summary,
     filePath,
-    fileName: filePath.split("/").pop() || "analysis.md",
+    fileName: basename(filePath),
     fileSize: fileStats.size,
   };
 }

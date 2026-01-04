@@ -1,13 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { isAuthorized } from "../auth.js";
+import { createAuthService } from "../auth.js";
 import { validateUserMessage, SimpleLimiter } from "../validation.js";
 
 describe("Bot Integration Tests", () => {
   describe("Authorization System", () => {
-    it("should use environment-based authorization", () => {
-      const userId = 999999;
-      const result = isAuthorized(userId);
-      expect(typeof result).toBe("boolean");
+    it("should authorize users from the provided list", () => {
+      const authService = createAuthService([123, 456]);
+      expect(authService.isAuthorized(123)).toBe(true);
+      expect(authService.isAuthorized(456)).toBe(true);
+      expect(authService.isAuthorized(789)).toBe(false);
+    });
+
+    it("should reject unauthorized users", () => {
+      const authService = createAuthService([100]);
+      expect(authService.isAuthorized(999999)).toBe(false);
     });
   });
 

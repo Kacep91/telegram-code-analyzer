@@ -24,7 +24,8 @@
   "license": "MIT",
   "dependencies": {
     "dotenv": "17.2.1",
-    "grammy": "1.37.0"
+    "grammy": "1.37.0",
+    "zod": "4.3.5"
   },
   "devDependencies": {
     "@types/node": "24.2.0",

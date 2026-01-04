@@ -6,26 +6,31 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFile, access, unlink, mkdir } from "fs/promises";
 import { Bot } from "grammy";
+import type { UserFromGetMe } from "@grammyjs/types";
 import { createBot } from "../bot.js";
 import { executeClaudeAnalysis } from "../claude.js";
 
 // Mock environment variables
 const originalEnv = process.env;
 
+// Use dynamic project path based on current working directory
+const PROJECT_PATH = process.cwd();
+
 beforeEach(async () => {
   process.env = {
     ...originalEnv,
     TELEGRAM_BOT_TOKEN: "test_token",
     AUTHORIZED_USERS: "123456789",
-    PROJECT_PATH: "/Users/kacep/Projects/telegram-code-analyzer",
+    PROJECT_PATH,
     CLAUDE_TIMEOUT: "180000", // 3 minutes for real Claude calls
   };
 
   // Ensure temp directory exists
   try {
     await mkdir("temp", { recursive: true });
-  } catch {
-    // Directory might already exist
+  } catch (error) {
+    // Directory already exists - this is expected
+    console.debug("Temp directory setup:", error);
   }
 });
 
@@ -34,6 +39,19 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+// Mock bot info for testing (avoids real API calls)
+const mockBotInfo: UserFromGetMe = {
+  id: 123456789,
+  is_bot: true,
+  first_name: "TestBot",
+  username: "testbot",
+  can_join_groups: true,
+  can_read_all_group_messages: false,
+  supports_inline_queries: false,
+  can_connect_to_business: false,
+  has_main_web_app: false,
+};
+
 describe("Bot Integration Tests", () => {
   let bot: Bot;
 
@@ -41,15 +59,7 @@ describe("Bot Integration Tests", () => {
     bot = createBot();
 
     // Provide mock bot info to avoid real API calls
-    (bot as any).botInfo = {
-      id: 123456789,
-      is_bot: true,
-      first_name: "TestBot",
-      username: "testbot",
-      can_join_groups: true,
-      can_read_all_group_messages: false,
-      supports_inline_queries: false,
-    };
+    bot.botInfo = mockBotInfo;
   });
 
   describe("Real Claude Integration and File Generation", () => {
@@ -82,8 +92,9 @@ describe("Bot Integration Tests", () => {
       // Clean up the generated file
       try {
         await unlink(result.filePath);
-      } catch {
-        // Ignore cleanup errors
+      } catch (error) {
+        // Cleanup failure is not critical for test
+        console.debug("Cleanup failed:", error);
       }
     }, 220000); // 3.7 minute timeout for real Claude call
 
@@ -140,7 +151,10 @@ describe("Bot Integration Tests", () => {
       // Clean up
       try {
         await unlink(result.filePath);
-      } catch {}
+      } catch (error) {
+        // Cleanup failure is not critical for test
+        console.debug("Cleanup failed:", error);
+      }
     }, 220000); // 3.7 minute timeout for Claude call
 
     it("should validate user input before calling Claude", async () => {
@@ -174,10 +188,11 @@ describe("Bot Integration Tests", () => {
       // Test edge cases
       expect(authService.isAuthorized(0)).toBe(false);
 
-      // Test empty auth service
-      const emptyAuthService = createAuthService([]);
-      expect(emptyAuthService.isAuthorized(123456789)).toBe(true); // This uses the environment variable
-      expect(emptyAuthService.isAuthorized(999999999)).toBe(false);
+      // Test auth service with multiple users
+      const multiUserAuthService = createAuthService([100, 200, 300]);
+      expect(multiUserAuthService.isAuthorized(100)).toBe(true);
+      expect(multiUserAuthService.isAuthorized(200)).toBe(true);
+      expect(multiUserAuthService.isAuthorized(400)).toBe(false);
     });
   });
 
@@ -212,7 +227,10 @@ describe("Bot Integration Tests", () => {
       // Clean up
       try {
         await unlink(result.filePath);
-      } catch {}
+      } catch (error) {
+        // Cleanup failure is not critical for test
+        console.debug("Cleanup failed:", error);
+      }
     }, 220000); // 3.7 minute timeout for Claude call
 
     it("should create files with unique timestamps", async () => {
@@ -242,7 +260,10 @@ describe("Bot Integration Tests", () => {
       // Clean up
       try {
         await Promise.all([unlink(result1.filePath), unlink(result2.filePath)]);
-      } catch {}
+      } catch (error) {
+        // Cleanup failure is not critical for test
+        console.debug("Cleanup failed:", error);
+      }
     }, 220000); // 3.7 minute timeout for parallel Claude calls
   });
 });

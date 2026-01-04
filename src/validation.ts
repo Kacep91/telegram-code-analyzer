@@ -26,9 +26,8 @@ function validateUserMessageSimple(message: unknown): ValidationResult<string> {
     };
   }
 
-  if (
-    !/^[a-zA-Z0-9а-яА-Я\s.?!,:;\-()[\]{}/\\_@#$%^&*+=|~`'"]+$/.test(message)
-  ) {
+  // Allow common programming characters needed for code questions
+  if (!/^[a-zA-Z0-9а-яА-ЯёЁ\s.,?!:;\-()[\]"'/_@#$%^&*+=|~`\\{}]+$/.test(message)) {
     return { success: false, error: "Message contains invalid characters" };
   }
 
@@ -124,6 +123,7 @@ export function sanitizeMessage(message: string): string {
 }
 
 class SimpleLimiter {
+  private static readonly MAX_TRACKED_USERS = 10000;
   private requests = new Map<number, number[]>();
   private readonly config: RateLimiterConfig;
   private cleanupIntervalId: NodeJS.Timeout | null = null;
@@ -134,6 +134,11 @@ class SimpleLimiter {
   }
 
   public isAllowed(userId: number): boolean {
+    // Prevent unbounded memory growth
+    if (this.requests.size >= SimpleLimiter.MAX_TRACKED_USERS) {
+      this.cleanup();
+    }
+
     const now = Date.now();
     const userRequests = this.requests.get(userId) || [];
 

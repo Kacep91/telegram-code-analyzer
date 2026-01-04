@@ -1,23 +1,21 @@
 import { Middleware, Context } from "grammy";
-
-const AUTHORIZED_USERS = new Set(
-  (process.env.AUTHORIZED_USERS || "").split(",").map(Number).filter(Boolean)
-);
+import { logger } from "./utils.js";
 
 export interface AuthService {
   isAuthorized(userId: number): boolean;
 }
 
-export function isAuthorized(userId: number): boolean {
-  const authorized = AUTHORIZED_USERS.has(userId);
-  if (!authorized) {
-    console.log(`❌ Unauthorized access: ${userId}`);
-  }
-  return authorized;
-}
-
-export function createAuthService(_authorizedUsers: number[]): AuthService {
-  return { isAuthorized };
+export function createAuthService(authorizedUsers: number[]): AuthService {
+  const usersSet = new Set(authorizedUsers);
+  return {
+    isAuthorized: (userId: number) => {
+      const authorized = usersSet.has(userId);
+      if (!authorized) {
+        logger.warn("Unauthorized access attempt");
+      }
+      return authorized;
+    },
+  };
 }
 
 export function authMiddleware(authService: AuthService): Middleware<Context> {

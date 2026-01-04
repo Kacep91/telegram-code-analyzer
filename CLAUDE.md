@@ -4,13 +4,11 @@ Minimalist tool for deep codebase analysis via Telegram bot using powerful Claud
 
 **ALWAYS RESPOND IN ENGLISH**
 
-1. For maximum efficiency, whenever you need to perform multiple independent operations, invoke all relevant tools simultaneously rather than sequentially.
-2. Before you finish, please verify your solution
-3. Do what has been asked; nothing more, nothing less.
-4. NEVER create files unless they're absolutely necessary for achieving your goal.
-5. ALWAYS prefer editing an existing file to creating a new one.
-6. NEVER proactively create documentation files (\*.md) or README files. Only create documentation files if explicitly requested by the User.
-7. PROJECT STRUCTURE IS IN ./PROJECT_STRUCTURE.md
+1. Do what has been asked; nothing more, nothing less.
+2. Before you finish, please verify your solution.
+3. NEVER create files unless they're absolutely necessary for achieving your goal.
+4. ALWAYS prefer editing an existing file to creating a new one.
+5. NEVER proactively create documentation files (\*.md) or README files.
 
 ## 🏗️ Project Stack
 
@@ -51,7 +49,15 @@ telegram-code-analyzer/
 │   ├── 📄 auth.ts              # 🔐 Whitelist authorization
 │   ├── 📄 claude.ts            # 🧠 Claude Code CLI integration
 │   ├── 📄 utils.ts             # 🛠️ Utilities (logging, config)
-│   └── 📄 types.ts             # 🏷️ TypeScript types
+│   ├── 📄 validation.ts        # 🔒 Input validation & security
+│   ├── 📄 types.ts             # 🏷️ TypeScript types
+│   ├── 📂 errors/              # ❌ Error handling
+│   │   ├── 📄 index.ts         # Error handling & messages
+│   │   └── 📄 types.ts         # Error type definitions
+│   └── 📂 __tests__/           # 🧪 Integration tests
+│       ├── 📄 setup.ts         # Test configuration
+│       ├── 📄 bot.integration.test.ts  # Bot tests
+│       └── 📄 integration.test.ts      # Integration tests
 ├── 📂 temp/                    # 🗂️ Temporary .md responses
 └── 📂 prompts/                  # 📝 Prompts for Claude sub-agents
     └── 📄 code-analyzer.md      # 🧠 Code analysis prompt
@@ -83,18 +89,27 @@ Run verification: `npm run build && npm run type-check && npm run dev`
 - **NO TODOs** in final code
 - **NO exec() calls** - use spawn() for security!
 - **NO unvalidated input** - always use Zod schemas!
+- **NO backwards-compatibility hacks** - don't rename unused `_vars`, re-export types, or add `// removed` comments
 
 ### Mandatory Standards:
 
 - **Type Guards** instead of any type assertions - create isType() functions
 - **Zod schemas** for all external data validation
 - **Custom error classes** extending Error with proper typing
-- **Dependency injection** for testability and modularity
+- **Pure functions** for testability and modularity
 - **Async/await** instead of promises where possible
 - **Interfaces** for all API contracts and configuration
 - **Meaningful names** with predicates (isAuthorized, hasAccess)
 - **Early returns** to reduce nesting
 - **Typed configurations** - no process.env without validation
+
+### Avoid Over-Engineering:
+
+- Don't add features, refactor code, or make "improvements" beyond what was asked
+- Don't add error handling for scenarios that can't happen
+- Don't create helpers or abstractions for one-time operations
+- Don't design for hypothetical future requirements
+- Three similar lines of code is better than a premature abstraction
 
 ## 📊 Implementation Standards
 
@@ -108,6 +123,9 @@ Run verification: `npm run build && npm run type-check && npm run dev`
 - ✓ Function works end-to-end through Telegram
 - ✓ Graceful error handling implemented
 - ✓ Code is clear and simple to understand
+- ✓ Old/unused code removed
+- ✓ Complexity stayed same or reduced (where possible)
+- ✓ Code is understandable by junior developer
 
 ## 🤝 Problem Solving Together
 
@@ -122,15 +140,10 @@ Your improvement ideas are welcome - ask away!
 
 ### **Security Always**:
 
-- **Zod validation** for all external data (Telegram, CLI, files)
-- **spawn() instead of exec()** to prevent command injection
 - **Whitelist authorization** via Telegram ID
 - **Input sanitization** before processing
 - **Timeout limits** for all operations
 - **Never log sensitive data** (tokens, user IDs)
-- **Graceful error handling** without exposing internals
-
-Avoid complex abstractions or "clever" code. The simple, obvious solution is probably better, and my guidance helps you stay focused on what matters.
 
 ## 🛠️ Development Commands
 
@@ -140,8 +153,26 @@ Avoid complex abstractions or "clever" code. The simple, obvious solution is pro
 - `npm run dev` - Development mode with tsx
 - `npm start` - Production start
 - `npm run type-check` - TypeScript type checking
-- `npm run lint` - Code quality and security check
-- `npm run validate` - Zod schema validation tests
+- `npm run lint` - Code formatting check with Prettier
+- `npm run lint:fix` - Auto-fix code formatting
+- `npm run test` - Run tests in watch mode
+- `npm run test:run` - Run tests once (CI mode)
+
+## 🔧 Tool Parallelism
+
+**One message, multiple tools:**
+
+- Multiple Edit tools → One message → All parallel
+- Parallel Read → Multiple files simultaneously
+- Batch independent operations together
+
+## 🔧 Efficient CLI Commands
+
+```bash
+rg -n "pattern" --glob '!node_modules/*'  # Pattern search
+fd filename                                 # File finding
+tree -L 2 src/                             # Project structure
+```
 
 ## 🌟 Key Project Features
 
@@ -162,12 +193,3 @@ Avoid complex abstractions or "clever" code. The simple, obvious solution is pro
 - **File system**: analysis results saved to temp/
 - **Environment config**: all configuration via .env
 - **No database**: avoiding database complexity
-
-> 📖 **Technical Documentation**: Detailed component descriptions in [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)
-
-# important-instruction-reminders
-
-Do what has been asked; nothing more, nothing less.
-NEVER create files unless they're absolutely necessary for achieving your goal.
-ALWAYS prefer editing an existing file to creating a new one.
-NEVER proactively create documentation files (\*.md) or README files. Only create documentation files if explicitly requested by the User.

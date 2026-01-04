@@ -31,7 +31,6 @@ telegram-code-analyzer/
 ├── package.json                # 📦 Project dependencies
 ├── tsconfig.json               # ⚙️ TypeScript configuration
 ├── vitest.config.ts            # 🧪 Test configuration
-├── eslint.config.js            # 📏 Linting configuration
 ├── .prettierrc.json            # 🎨 Code formatting
 ├── CLAUDE.md                   # 🤖 AI Instructions
 ├── PROJECT_STRUCTURE.md        # 📋 This file
@@ -39,38 +38,24 @@ telegram-code-analyzer/
 └── README.md                   # 📚 Installation guide
 ```
 
-### Source Code (`src/`) - **11 files total**
+### Source Code (`src/`) - **12 files total**
 
 ```
 src/
-├── index.ts        (36 lines)  # 🚀 Application entry point  
+├── index.ts        (36 lines)  # 🚀 Application entry point
 ├── bot.ts          (145 lines) # 🤖 Telegram bot handlers
 ├── auth.ts         (34 lines)  # 🔐 User authorization
-├── claude.ts       (222 lines) # 🧠 Claude CLI integration  
+├── claude.ts       (222 lines) # 🧠 Claude CLI integration
 ├── utils.ts        (275 lines) # 🛠️ Utility functions
 ├── validation.ts   (249 lines) # 🔒 Input validation & security
 ├── types.ts        (227 lines) # 🏷️ TypeScript type definitions
-├── container.ts    (105 lines) # 📦 Dependency injection
 ├── errors/
-│   ├── index.ts    (262 lines) # ❌ Error handling & messages
-│   └── types.ts    (165 lines) # 🏷️ Error type definitions
+│   ├── index.ts    (241 lines) # ❌ Error handling & messages
+│   └── types.ts    (164 lines) # 🏷️ Error type definitions
 └── __tests__/
-    ├── setup.ts    (22 lines)  # 🧪 Test configuration
-    ├── auth.test.ts (125 lines) # 🔐 Authentication tests
-    ├── validation.test.ts (308 lines) # 🔒 Validation tests
-    ├── utils.test.ts (65 lines) # 🛠️ Utility tests
-    └── integration.test.ts (75 lines) # 🧪 Integration tests
-```
-
-### Additional Files
-
-```
-interfaces/
-└── index.ts        (18 lines)  # 🔗 Core interfaces
-
-errors/
-├── handler.ts      (573 lines) # 🚨 Error handling strategies  
-└── strategies.ts   (342 lines) # 🔄 Recovery strategies
+    ├── setup.ts    (15 lines)  # 🧪 Test configuration
+    ├── bot.integration.test.ts (248 lines) # 🤖 Bot integration tests
+    └── integration.test.ts (66 lines) # 🧪 Integration tests
 ```
 
 ### Other Directories
@@ -83,10 +68,10 @@ temp/                    # 📁 Analysis result files
 prompts/                 # 📝 Claude prompts
 └── code-analyzer.md     # Analysis instructions
 
-src/__tests__/           # 🧪 Tests (to be simplified)
-├── auth.test.ts        # (needs rewrite - currently tests libraries)
-├── validation.test.ts  # (needs rewrite - tests Zod, not logic)  
-└── utils.test.ts       # (needs rewrite - tests Math.floor)
+src/__tests__/           # 🧪 Integration and bot tests
+├── bot.integration.test.ts  # Comprehensive bot integration tests
+├── integration.test.ts      # End-to-end integration tests
+└── setup.ts                 # Test environment configuration
 ```
 
 ## 🧩 File Descriptions
@@ -116,24 +101,21 @@ TypeScript type definitions for the application's data structures and interfaces
 
 ### **Additional Components**
 
-#### `src/container.ts` (105 lines)
-Dependency injection container for managing service instances.
-
-#### `src/errors/index.ts` (262 lines)
+#### `src/errors/index.ts` (241 lines)
 Centralized error handling with localized messages and error recovery.
 
-#### `src/errors/types.ts` (165 lines)
+#### `src/errors/types.ts` (164 lines)
 Error type definitions and classification system.
 
 ## 📊 Project Metrics
 
 | Component | Count | Lines |
 |-----------|-------|-------|
-| **Total TypeScript Files** | 11 | ~2,100 |
-| **Core Source Files** | 7 | ~1,188 |
-| **Error Handling Files** | 2 | ~427 |
-| **Test Files** | 5 | ~595 |
-| **Configuration Files** | 4 | - |
+| **Total TypeScript Files** | 12 | ~1,922 |
+| **Core Source Files** | 7 | ~1,388 |
+| **Error Handling Files** | 2 | ~405 |
+| **Test Files** | 3 | ~329 |
+| **Configuration Files** | 9 | - |
 
 ## 🎯 Development Principles
 
@@ -154,8 +136,8 @@ TypeScript compiler configuration with strict type checking.
 ### `vitest.config.ts`
 Test framework configuration for unit and integration tests.
 
-### `eslint.config.js`
-Code linting rules and quality standards.
+### `.prettierrc.json`
+Code formatting rules and style configuration.
 
 ### `.env`
 Environment variables for tokens, user authorization, and configuration.
@@ -164,12 +146,13 @@ Environment variables for tokens, user authorization, and configuration.
 
 ```bash
 npm run dev         # Development mode with tsx
-npm run build       # TypeScript compilation  
+npm run build       # TypeScript compilation
 npm start           # Production start
-npm run test        # Run test suite
+npm run test        # Run tests in watch mode
+npm run test:run    # Run tests once (CI mode)
 npm run type-check  # TypeScript type checking
-npm run lint        # Code linting
-npm run validate    # Input validation tests
+npm run lint        # Check code formatting
+npm run lint:fix    # Auto-fix code formatting
 ```
 
 ## 🧪 Testing Strategy

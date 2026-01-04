@@ -19,7 +19,7 @@ Simple Telegram bot for code analysis conversations. Send questions → get anal
 ### Prerequisites
 
 - Node.js 18 or higher
-- Claude Code CLI (installed via npm or locally)
+- Claude Code CLI (`@anthropic-ai/claude-code`)
 - Telegram Bot Token (from @BotFather)
 - Your Telegram user ID
 
@@ -136,11 +136,13 @@ The bot provides two types of responses:
 **Minimal dependencies for maximum simplicity:**
 
 - **Runtime**: Node.js 18+
-- **Language**: TypeScript 
-- **Bot**: grammY (Telegram Bot API)
+- **Language**: TypeScript 5.9.2
+- **Bot**: grammY 1.37.0 (Telegram Bot API)
 - **AI**: Claude Code CLI
-- **Config**: dotenv
-- **Architecture**: File system only, **no database, no DI, no patterns**
+- **Config**: dotenv 17.2.1
+- **Testing**: Vitest 2.1.8
+- **Code Quality**: Prettier 3.6.2
+- **Architecture**: File system only, **no database, no DI containers, no patterns**
 
 **Philosophy**: Simple functions over complex abstractions
 
@@ -149,11 +151,14 @@ The bot provides two types of responses:
 ### Available Scripts
 
 ```bash
-npm run dev         # Development mode with tsx
-npm run build       # TypeScript compilation  
-npm start          # Production mode
-npm run type-check # Type checking only
-npm run clean      # Remove build files
+npm run dev          # Development mode with tsx
+npm run build        # TypeScript compilation
+npm start            # Production mode
+npm run type-check   # Type checking only
+npm run test         # Run tests in watch mode
+npm run test:run     # Run tests once (CI)
+npm run lint         # Check code formatting
+npm run lint:fix     # Auto-fix formatting
 ```
 
 ### 📁 Project Structure
@@ -162,19 +167,26 @@ npm run clean      # Remove build files
 
 ```
 src/
-├── index.ts      # Entry point (60 lines)
-├── bot.ts        # Telegram bot handlers  
-├── auth.ts       # Simple whitelist check
-├── claude.ts     # Claude CLI integration
-├── utils.ts      # Basic utilities
-├── validation.ts # Input validation
-└── types.ts      # Essential types only
+├── index.ts              # Entry point (36 lines)
+├── bot.ts                # Telegram bot handlers (145 lines)
+├── auth.ts               # Simple whitelist check (34 lines)
+├── claude.ts             # Claude CLI integration (222 lines)
+├── utils.ts              # Basic utilities (275 lines)
+├── validation.ts         # Input validation (249 lines)
+├── types.ts              # Type definitions (227 lines)
+├── errors/               # Error handling
+│   ├── index.ts          # Error handling (241 lines)
+│   └── types.ts          # Error types (164 lines)
+└── __tests__/            # Test suite
+    ├── setup.ts          # Test config (15 lines)
+    ├── bot.integration.test.ts  # Bot tests (248 lines)
+    └── integration.test.ts      # Integration tests (66 lines)
 
-temp/             # Analysis results
-prompts/          # Analysis prompts
+temp/                     # Analysis results
+prompts/                  # Analysis prompts
 ```
 
-**Removed**: `container.ts`, `interfaces/`, `guards.ts`, `errors/handler.ts`, `errors/strategies.ts` (1,757 lines of overengineering)
+**Removed**: `container.ts`, `interfaces/`, unit test files, `errors/handler.ts`, `errors/strategies.ts` (over 1,700 lines of overengineering eliminated)
 
 ## Deployment
 

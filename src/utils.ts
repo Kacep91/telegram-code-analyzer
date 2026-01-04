@@ -3,6 +3,7 @@
  */
 import { promises as fs } from "fs";
 import { join } from "path";
+import { z } from "zod";
 import { Config, RateLimiterConfig } from "./types.js";
 
 const RATE_LIMIT = {
@@ -76,11 +77,7 @@ export const logger = {
  * Creates directory if it doesn't exist
  */
 export async function ensureDir(dirPath: string): Promise<void> {
-  try {
-    await fs.access(dirPath);
-  } catch {
-    await fs.mkdir(dirPath, { recursive: true });
-  }
+  await fs.mkdir(dirPath, { recursive: true });
 }
 
 /**
@@ -169,107 +166,73 @@ export function formatDuration(ms: number): string {
 }
 
 /**
+ * Zod schema for rate limiter configuration
+ */
+const RateLimiterConfigSchema = z.object({
+  maxRequests: z.number().positive().default(RATE_LIMIT.MAX_REQUESTS_PER_MINUTE),
+  windowMs: z.number().positive().default(RATE_LIMIT.WINDOW_SIZE_MS),
+  cleanupIntervalMs: z.number().positive().default(RATE_LIMIT.CLEANUP_INTERVAL_MS),
+});
+
+/**
+ * Zod schema for application configuration
+ */
+const ConfigSchema = z.object({
+  telegramToken: z.string().min(1, "TELEGRAM_BOT_TOKEN is required"),
+  authorizedUsers: z
+    .array(z.number().positive())
+    .min(1, "At least one authorized user required"),
+  projectPath: z.string().min(1, "PROJECT_PATH is required"),
+  claudeTimeout: z.number().positive().default(ANALYSIS.DEFAULT_TIMEOUT_MS),
+  rateLimiter: RateLimiterConfigSchema,
+});
+
+/**
+ * Parses environment variable as positive number with fallback
+ */
+function parseEnvNumber(value: string | undefined, defaultValue: number): number {
+  if (!value) return defaultValue;
+  const parsed = parseInt(value, 10);
+  return isNaN(parsed) || parsed <= 0 ? defaultValue : parsed;
+}
+
+/**
  * Loads rate limiter configuration from environment variables
  */
 function loadRateLimiterConfig(): RateLimiterConfig {
-  const maxRequestsString = process.env.RATE_LIMIT_MAX_REQUESTS;
-  const windowMsString = process.env.RATE_LIMIT_WINDOW_MS;
-  const cleanupIntervalMsString = process.env.RATE_LIMIT_CLEANUP_INTERVAL_MS;
-
-  const maxRequests = maxRequestsString
-    ? parseInt(maxRequestsString, 10)
-    : RATE_LIMIT.MAX_REQUESTS_PER_MINUTE;
-
-  const windowMs = windowMsString
-    ? parseInt(windowMsString, 10)
-    : RATE_LIMIT.WINDOW_SIZE_MS;
-
-  const cleanupIntervalMs = cleanupIntervalMsString
-    ? parseInt(cleanupIntervalMsString, 10)
-    : RATE_LIMIT.CLEANUP_INTERVAL_MS;
-
-  if (isNaN(maxRequests) || maxRequests <= 0) {
-    logger.warn(
-      `Invalid RATE_LIMIT_MAX_REQUESTS: ${maxRequestsString}, using default: ${RATE_LIMIT.MAX_REQUESTS_PER_MINUTE}`
-    );
-    return {
-      maxRequests: RATE_LIMIT.MAX_REQUESTS_PER_MINUTE,
-      windowMs: windowMs,
-      cleanupIntervalMs: cleanupIntervalMs,
-    };
-  }
-
-  if (isNaN(windowMs) || windowMs <= 0) {
-    logger.warn(
-      `Invalid RATE_LIMIT_WINDOW_MS: ${windowMsString}, using default: ${RATE_LIMIT.WINDOW_SIZE_MS}`
-    );
-    return {
-      maxRequests: maxRequests,
-      windowMs: RATE_LIMIT.WINDOW_SIZE_MS,
-      cleanupIntervalMs: cleanupIntervalMs,
-    };
-  }
-
-  if (isNaN(cleanupIntervalMs) || cleanupIntervalMs <= 0) {
-    logger.warn(
-      `Invalid RATE_LIMIT_CLEANUP_INTERVAL_MS: ${cleanupIntervalMsString}, using default: ${RATE_LIMIT.CLEANUP_INTERVAL_MS}`
-    );
-    return {
-      maxRequests: maxRequests,
-      windowMs: windowMs,
-      cleanupIntervalMs: RATE_LIMIT.CLEANUP_INTERVAL_MS,
-    };
-  }
-
   return {
-    maxRequests,
-    windowMs,
-    cleanupIntervalMs,
+    maxRequests: parseEnvNumber(
+      process.env.RATE_LIMIT_MAX_REQUESTS,
+      RATE_LIMIT.MAX_REQUESTS_PER_MINUTE
+    ),
+    windowMs: parseEnvNumber(
+      process.env.RATE_LIMIT_WINDOW_MS,
+      RATE_LIMIT.WINDOW_SIZE_MS
+    ),
+    cleanupIntervalMs: parseEnvNumber(
+      process.env.RATE_LIMIT_CLEANUP_INTERVAL_MS,
+      RATE_LIMIT.CLEANUP_INTERVAL_MS
+    ),
   };
 }
 
 /**
- * Loads configuration from environment variables
+ * Loads configuration from environment variables with Zod validation
  */
 export function loadConfig(): Config {
-  const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
-  if (!telegramToken) {
-    throw new Error("TELEGRAM_BOT_TOKEN environment variable is required");
-  }
-
-  const authorizedUsersString = process.env.AUTHORIZED_USERS;
-  if (!authorizedUsersString) {
-    throw new Error("AUTHORIZED_USERS environment variable is required");
-  }
-
-  const authorizedUsers = authorizedUsersString
-    .split(",")
-    .map((id) => parseInt(id.trim(), 10))
-    .filter((id) => !isNaN(id) && id > 0);
-
-  if (authorizedUsers.length === 0) {
-    throw new Error("AUTHORIZED_USERS must contain at least one valid user ID");
-  }
-
-  const projectPath = process.env.PROJECT_PATH;
-  if (!projectPath) {
-    throw new Error("PROJECT_PATH environment variable is required");
-  }
-
-  const claudeTimeoutString =
-    process.env.CLAUDE_TIMEOUT || ANALYSIS.DEFAULT_TIMEOUT_MS.toString();
-  const claudeTimeout = parseInt(claudeTimeoutString, 10);
-  if (isNaN(claudeTimeout) || claudeTimeout <= 0) {
-    throw new Error("CLAUDE_TIMEOUT must be a positive number");
-  }
-
-  const rateLimiter = loadRateLimiterConfig();
-
-  return {
-    telegramToken,
-    authorizedUsers,
-    projectPath,
-    claudeTimeout,
-    rateLimiter,
+  const rawConfig = {
+    telegramToken: process.env.TELEGRAM_BOT_TOKEN ?? "",
+    authorizedUsers: (process.env.AUTHORIZED_USERS ?? "")
+      .split(",")
+      .map((id) => parseInt(id.trim(), 10))
+      .filter((id) => !isNaN(id) && id > 0),
+    projectPath: process.env.PROJECT_PATH ?? "",
+    claudeTimeout: parseEnvNumber(
+      process.env.CLAUDE_TIMEOUT,
+      ANALYSIS.DEFAULT_TIMEOUT_MS
+    ),
+    rateLimiter: loadRateLimiterConfig(),
   };
+
+  return ConfigSchema.parse(rawConfig);
 }
