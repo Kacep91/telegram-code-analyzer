@@ -4,7 +4,13 @@
 import { promises as fs } from "fs";
 import { join } from "path";
 import { z } from "zod";
-import { Config, RateLimiterConfig } from "./types.js";
+import {
+  Config,
+  RateLimiterConfig,
+  ExtendedConfig,
+  LLMApiKeys,
+} from "./types.js";
+import { RAGConfigSchema } from "./rag/types.js";
 
 const RATE_LIMIT = {
   MAX_REQUESTS_PER_MINUTE: 10,
@@ -16,6 +22,11 @@ const ANALYSIS = {
   DEFAULT_TIMEOUT_MS: 300_000,
   MAX_SUMMARY_LENGTH: 300,
   DEFAULT_OUTPUT_DIR: "temp",
+} as const;
+
+const LLM = {
+  DEFAULT_PROVIDER: "openai",
+  DEFAULT_RAG_STORE_PATH: "./rag-index",
 } as const;
 
 export enum LogLevel {
@@ -169,9 +180,15 @@ export function formatDuration(ms: number): string {
  * Zod schema for rate limiter configuration
  */
 const RateLimiterConfigSchema = z.object({
-  maxRequests: z.number().positive().default(RATE_LIMIT.MAX_REQUESTS_PER_MINUTE),
+  maxRequests: z
+    .number()
+    .positive()
+    .default(RATE_LIMIT.MAX_REQUESTS_PER_MINUTE),
   windowMs: z.number().positive().default(RATE_LIMIT.WINDOW_SIZE_MS),
-  cleanupIntervalMs: z.number().positive().default(RATE_LIMIT.CLEANUP_INTERVAL_MS),
+  cleanupIntervalMs: z
+    .number()
+    .positive()
+    .default(RATE_LIMIT.CLEANUP_INTERVAL_MS),
 });
 
 /**
@@ -190,7 +207,10 @@ const ConfigSchema = z.object({
 /**
  * Parses environment variable as positive number with fallback
  */
-function parseEnvNumber(value: string | undefined, defaultValue: number): number {
+function parseEnvNumber(
+  value: string | undefined,
+  defaultValue: number
+): number {
   if (!value) return defaultValue;
   const parsed = parseInt(value, 10);
   return isNaN(parsed) || parsed <= 0 ? defaultValue : parsed;
@@ -235,4 +255,141 @@ export function loadConfig(): Config {
   };
 
   return ConfigSchema.parse(rawConfig);
+}
+
+// =============================================================================
+// Extended Configuration for Multi-LLM Support
+// =============================================================================
+
+/** Provider type for default LLM (excludes claude-code which is CLI-only) */
+type DefaultLLMProvider = "openai" | "gemini" | "anthropic" | "perplexity";
+
+/**
+ * Zod schema for LLM API keys
+ */
+const LLMApiKeysSchema = z.object({
+  openai: z.string().min(1).optional(),
+  gemini: z.string().min(1).optional(),
+  anthropic: z.string().min(1).optional(),
+  perplexity: z.string().min(1).optional(),
+  jina: z.string().min(1).optional(),
+});
+
+/**
+ * Zod schema for extended configuration with API key validation
+ * @remarks Validates that the default LLM provider has a corresponding API key
+ */
+const ExtendedConfigSchema = ConfigSchema.extend({
+  llmApiKeys: LLMApiKeysSchema,
+  defaultLLMProvider: z
+    .enum(["openai", "gemini", "anthropic", "perplexity"])
+    .default(LLM.DEFAULT_PROVIDER),
+  ragStorePath: z.string().min(1).default(LLM.DEFAULT_RAG_STORE_PATH),
+  ragConfig: RAGConfigSchema,
+}).refine(
+  (data) => {
+    const keyMap: Record<string, string | undefined> = {
+      openai: data.llmApiKeys.openai,
+      gemini: data.llmApiKeys.gemini,
+      anthropic: data.llmApiKeys.anthropic,
+      perplexity: data.llmApiKeys.perplexity,
+    };
+    return keyMap[data.defaultLLMProvider] !== undefined;
+  },
+  {
+    message:
+      "API key required for default LLM provider. Set the corresponding API key environment variable.",
+    path: ["defaultLLMProvider"],
+  }
+);
+
+/**
+ * Loads LLM API keys from environment variables
+ * @returns Object with available API keys (keys only present if set)
+ */
+function loadLLMApiKeys(): LLMApiKeys {
+  // Build mutable object then return as readonly
+  const keys: {
+    openai?: string;
+    gemini?: string;
+    anthropic?: string;
+    perplexity?: string;
+    jina?: string;
+  } = {};
+
+  const openai = process.env.OPENAI_API_KEY;
+  if (openai) keys.openai = openai;
+
+  const gemini = process.env.GEMINI_API_KEY;
+  if (gemini) keys.gemini = gemini;
+
+  const anthropic = process.env.ANTHROPIC_API_KEY;
+  if (anthropic) keys.anthropic = anthropic;
+
+  const perplexity = process.env.PERPLEXITY_API_KEY;
+  if (perplexity) keys.perplexity = perplexity;
+
+  const jina = process.env.JINA_API_KEY;
+  if (jina) keys.jina = jina;
+
+  return keys;
+}
+
+/**
+ * Parses environment variable as float with fallback
+ * @param value - Raw environment variable value
+ * @param defaultValue - Default if value is invalid
+ */
+function parseEnvFloat(
+  value: string | undefined,
+  defaultValue: number
+): number {
+  if (!value) return defaultValue;
+  const parsed = parseFloat(value);
+  return isNaN(parsed) ? defaultValue : parsed;
+}
+
+/**
+ * Loads extended configuration with LLM and RAG settings
+ * @returns Validated extended configuration
+ * @throws ZodError if configuration is invalid
+ */
+export function loadExtendedConfig(): ExtendedConfig {
+  const baseConfig = loadConfig();
+
+  const rawExtended = {
+    ...baseConfig,
+    llmApiKeys: loadLLMApiKeys(),
+    defaultLLMProvider:
+      process.env.DEFAULT_LLM_PROVIDER || LLM.DEFAULT_PROVIDER,
+    ragStorePath: process.env.RAG_STORE_PATH || LLM.DEFAULT_RAG_STORE_PATH,
+    ragConfig: {
+      chunkSize: parseEnvNumber(process.env.RAG_CHUNK_SIZE, 300),
+      chunkOverlap: parseEnvNumber(process.env.RAG_CHUNK_OVERLAP, 50),
+      topK: parseEnvNumber(process.env.RAG_TOP_K, 15),
+      rerankTopK: parseEnvNumber(process.env.RAG_RERANK_TOP_K, 5),
+      vectorWeight: parseEnvFloat(process.env.RAG_VECTOR_WEIGHT, 0.3),
+      llmWeight: parseEnvFloat(process.env.RAG_LLM_WEIGHT, 0.7),
+    },
+  };
+
+  return ExtendedConfigSchema.parse(rawExtended);
+}
+
+/**
+ * Returns list of LLM providers that have API keys configured
+ * @param apiKeys - LLM API keys object
+ * @returns Array of configured provider names
+ */
+export function getConfiguredProviders(
+  apiKeys: LLMApiKeys
+): DefaultLLMProvider[] {
+  const providers: DefaultLLMProvider[] = [];
+
+  if (apiKeys.openai) providers.push("openai");
+  if (apiKeys.gemini) providers.push("gemini");
+  if (apiKeys.anthropic) providers.push("anthropic");
+  if (apiKeys.perplexity) providers.push("perplexity");
+
+  return providers;
 }

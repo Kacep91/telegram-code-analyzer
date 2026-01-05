@@ -1,253 +1,217 @@
-# 🤖 Telegram Code Analyzer
+# Telegram Code Analyzer
 
-**Minimalist Telegram bot** that provides codebase analysis using Claude Code CLI. Ask questions through Telegram and get markdown analysis files.
+Telegram bot for codebase analysis using RAG (Retrieval-Augmented Generation) and Claude Code CLI.
 
-## 🎯 What it does
+## Features
 
-Simple Telegram bot for code analysis conversations. Send questions → get analysis results as files. **No database, no complex architecture, no overengineering.**
-
-## ✨ Key Features
-
-- **Natural language queries** - Ask questions about your codebase  
-- **Claude analysis** - Uses Claude Code CLI for code insights
-- **Whitelist access** - Simple authorization via Telegram user IDs
-- **File responses** - Analysis delivered as markdown documents
-- **KISS architecture** - Maximum simplicity, minimum complexity
+- **RAG-powered analysis** - Semantic code search with LLM reranking
+- **Multi-LLM support** - OpenAI, Gemini, Anthropic, Perplexity
+- **Claude Code CLI** - Deep codebase analysis via sub-agents
+- **Telegram interface** - Natural language queries
+- **Whitelist auth** - Access control via Telegram user IDs
 
 ## Quick Start
 
-### Prerequisites
-
-- Node.js 18 or higher
-- Claude Code CLI (`@anthropic-ai/claude-code`)
-- Telegram Bot Token (from @BotFather)
-- Your Telegram user ID
-
-### Installation
-
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd telegram-code-analyzer
-   ```
-
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
-
-3. **Install Claude Code CLI**
-   ```bash
-   npm install -g @anthropic-ai/claude-code
-   ```
-
-4. **Configure environment**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your settings
-   ```
-
-5. **Build and run**
-   ```bash
-   npm run build
-   npm start
-   ```
-
-   For development:
-   ```bash
-   npm run dev
-   ```
-
-## Configuration
-
-Create a `.env` file with the following settings:
-
-```env
-# Get this from @BotFather on Telegram
-TELEGRAM_TOKEN=your_telegram_bot_token_here
-
-# Your Telegram user IDs (comma-separated)
-AUTHORIZED_USERS=123456789,987654321
-
-# Path to the project you want to analyze
-PROJECT_PATH=/path/to/your/project
-
-# Analysis timeout in milliseconds (5 minutes default)
-CLAUDE_TIMEOUT=300000
-
-# Claude CLI path (optional, auto-detected if not specified)
-CLAUDE_PATH=/Users/username/.claude/local/claude
-
-# Logging level
-LOG_LEVEL=INFO
-```
-
-### Getting Your Telegram User ID
-
-1. Start a chat with @userinfobot on Telegram
-2. Send any message to get your user ID
-3. Add this ID to `AUTHORIZED_USERS` in your `.env` file
-
-## Usage
-
-Once the bot is running, interact with it through Telegram:
-
-### Basic Commands
-
-- `/start` - Welcome message and capabilities overview
-- `/help` - Usage guide and example questions
-
-### Analysis Examples
-
-Simply send these as regular messages to the bot:
-
-```
-Explain the project architecture
-
-How does the authentication system work?
-
-Find potential security vulnerabilities
-
-Analyze the database schema design
-
-What are the main performance bottlenecks?
-
-Review the error handling patterns
-
-Suggest improvements for the API structure
-```
-
-### Response Format
-
-The bot provides two types of responses:
-
-1. **Quick summary** - Brief overview sent directly to chat
-2. **Detailed analysis** - Comprehensive markdown file attached as document
-
-## How It Works
-
-1. **Question Processing** - Your question is combined with analysis prompts
-2. **Claude Analysis** - Claude Code CLI analyzes your codebase with the question
-3. **Response Generation** - Results are formatted and saved as markdown
-4. **Delivery** - Summary sent to chat, detailed file attached as document
-
-## 🏗️ Technology Stack
-
-**Minimal dependencies for maximum simplicity:**
-
-- **Runtime**: Node.js 18+
-- **Language**: TypeScript 5.9.2
-- **Bot**: grammY 1.37.0 (Telegram Bot API)
-- **AI**: Claude Code CLI
-- **Config**: dotenv 17.2.1
-- **Testing**: Vitest 2.1.8
-- **Code Quality**: Prettier 3.6.2
-- **Architecture**: File system only, **no database, no DI containers, no patterns**
-
-**Philosophy**: Simple functions over complex abstractions
-
-## Development
-
-### Available Scripts
-
 ```bash
-npm run dev          # Development mode with tsx
-npm run build        # TypeScript compilation
-npm start            # Production mode
-npm run type-check   # Type checking only
-npm run test         # Run tests in watch mode
-npm run test:run     # Run tests once (CI)
-npm run lint         # Check code formatting
-npm run lint:fix     # Auto-fix formatting
-```
+# 1. Clone and install
+git clone <repository-url>
+cd telegram-code-analyzer
+npm install
 
-### 📁 Project Structure
+# 2. Configure
+cp .env.example .env
+# Edit .env with your tokens
 
-**Simplified architecture after radical cleanup:**
-
-```
-src/
-├── index.ts              # Entry point (36 lines)
-├── bot.ts                # Telegram bot handlers (145 lines)
-├── auth.ts               # Simple whitelist check (34 lines)
-├── claude.ts             # Claude CLI integration (222 lines)
-├── utils.ts              # Basic utilities (275 lines)
-├── validation.ts         # Input validation (249 lines)
-├── types.ts              # Type definitions (227 lines)
-├── errors/               # Error handling
-│   ├── index.ts          # Error handling (241 lines)
-│   └── types.ts          # Error types (164 lines)
-└── __tests__/            # Test suite
-    ├── setup.ts          # Test config (15 lines)
-    ├── bot.integration.test.ts  # Bot tests (248 lines)
-    └── integration.test.ts      # Integration tests (66 lines)
-
-temp/                     # Analysis results
-prompts/                  # Analysis prompts
-```
-
-**Removed**: `container.ts`, `interfaces/`, unit test files, `errors/handler.ts`, `errors/strategies.ts` (over 1,700 lines of overengineering eliminated)
-
-## Deployment
-
-### Simple Deployment
-
-1. Set up a VPS with Node.js 18+
-2. Clone and configure the project
-3. Install dependencies and build
-4. Run the bot:
-
-```bash
+# 3. Build and run
 npm run build
 npm start
 ```
 
-For background execution, use nohup or screen:
+## Configuration
 
-```bash
-nohup npm start > bot.log 2>&1 &
+```env
+# Required
+TELEGRAM_TOKEN=your_bot_token
+AUTHORIZED_USERS=123456789,987654321
+PROJECT_PATH=/path/to/analyze
+
+# LLM Providers (at least one required for RAG)
+OPENAI_API_KEY=sk-...
+GEMINI_API_KEY=...
+ANTHROPIC_API_KEY=...
+PERPLEXITY_API_KEY=...
+
+# Optional
+CLAUDE_TIMEOUT=300000
+LOG_LEVEL=INFO
 ```
 
-### Docker Alternative
+## Usage
 
-While the project is designed to run directly on the host for simplicity, you can containerize it if needed. The file system approach and direct CLI integration work best in standard Node.js environments.
+### Telegram Commands
 
-## Security
+| Command | Description |
+|---------|-------------|
+| `/start` | Welcome message |
+| `/help` | Usage guide |
+| `/index` | Index codebase for RAG |
+| `/ask <question>` | Query indexed codebase |
+| `/provider [name]` | View/switch LLM provider |
 
-- **Access Control**: Only whitelisted Telegram user IDs can use the bot
-- **Input Validation**: All user inputs are validated and sanitized
-- **No Data Persistence**: Analysis results are temporary and cleaned up automatically
-- **Secure Configuration**: All sensitive data stored in environment variables
+### Analysis Modes
+
+**RAG Query** (`/ask`): Fast semantic search through indexed code
+```
+/ask How does authentication work?
+/ask Find all API endpoints
+```
+
+**Claude Code Analysis** (regular messages): Deep analysis via CLI
+```
+Explain the project architecture
+Find security vulnerabilities
+Review error handling patterns
+```
+
+## How RAG Works
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│                  INDEXING PHASE                     │
+├─────────────────────────────────────────────────────┤
+│  .ts/.tsx files                                     │
+│       ↓                                             │
+│  AST Parser (extract functions, classes, types)    │
+│       ↓                                             │
+│  Chunker (semantic splitting with overlap)         │
+│       ↓                                             │
+│  Embedding Provider (OpenAI/Gemini)                │
+│       ↓                                             │
+│  Vector Store (in-memory + JSON persistence)       │
+└─────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────┐
+│                   QUERY PHASE                       │
+├─────────────────────────────────────────────────────┤
+│  User Question                                      │
+│       ↓                                             │
+│  Query Embedding                                    │
+│       ↓                                             │
+│  Vector Search (cosine similarity, top-K)          │
+│       ↓                                             │
+│  LLM Reranking (score relevance 0-1)               │
+│       ↓                                             │
+│  Parent Chunk Resolution (add context)             │
+│       ↓                                             │
+│  Answer Generation (with sources)                  │
+└─────────────────────────────────────────────────────┘
+```
+
+### Components
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| Parser | `src/rag/parser.ts` | TypeScript AST parsing, entity extraction |
+| Chunker | `src/rag/chunker.ts` | Semantic code splitting with overlap |
+| Store | `src/rag/store.ts` | In-memory vector store, JSON persistence |
+| Retriever | `src/rag/retriever.ts` | Two-stage search: vector + LLM rerank |
+| Pipeline | `src/rag/pipeline.ts` | Orchestrates index/query operations |
+
+### Full Request Flow
+
+```
+User sends message to Telegram
+            │
+            ▼
+    Input Validation (Zod)
+            │
+            ▼
+    ┌───────┴───────┐
+    │               │
+  /ask          Regular msg
+    │               │
+    ▼               ▼
+RAG Pipeline    Claude Code CLI
+    │               │
+    ▼               │
+Vector Search       │
+(top-15 chunks)     │
+    │               │
+    ▼               │
+LLM Reranking       │
+(score 0-1)         │
+    │               │
+    ▼               │
+Context Assembly    │
+(parent chunks)     │
+    │               │
+    ▼               ▼
+LLM Answer      Analysis Result
+Generation          │
+    │               │
+    └───────┬───────┘
+            │
+            ▼
+    Send to Telegram:
+    - Brief summary (message)
+    - Detailed .md file (document)
+```
+
+### Scoring Formula
+
+Final relevance score combines vector similarity and LLM judgment:
+
+```
+finalScore = vectorWeight × vectorScore + llmWeight × llmScore
+           = 0.3 × vectorScore + 0.7 × llmScore
+```
+
+LLM reranking weighs more heavily to capture semantic relevance beyond keyword matching.
+
+## Tech Stack
+
+- **Runtime**: Node.js 18+
+- **Language**: TypeScript 5.9
+- **Bot Framework**: grammY
+- **Analysis**: Claude Code CLI
+- **Embeddings**: OpenAI / Gemini
+- **Validation**: Zod
+
+## Development
+
+```bash
+npm run dev        # Development mode (tsx)
+npm run build      # TypeScript compilation
+npm run type-check # Type checking only
+npm run test       # Tests (watch mode)
+npm run lint       # Check formatting
+```
 
 ## Troubleshooting
 
-### Common Issues
+**"Claude CLI not found"** - Install: `npm install -g @anthropic-ai/claude-code`
 
-**"Claude CLI not found"**
-- Install Claude Code CLI: `npm install -g @anthropic-ai/claude-code`
-- Or specify custom path in `CLAUDE_PATH` environment variable
+**"No embedding provider"** - Set `OPENAI_API_KEY` or `GEMINI_API_KEY` in .env
 
-**"Analysis timeout"**
-- Increase `CLAUDE_TIMEOUT` value in `.env`
-- Try asking more specific questions
-- Ensure your project path is accessible
+**"Unauthorized"** - Add your Telegram user ID to `AUTHORIZED_USERS`
 
-**"Unauthorized access"**  
-- Verify your Telegram user ID in `AUTHORIZED_USERS`
-- Check that the bot token is correct
-- Ensure the bot is running and accessible
+---
 
-## Keywords
+## На русском
 
-`telegram-bot` `code-analysis` `claude-ai` `typescript` `nodejs` `code-review` `static-analysis` `codebase-analyzer` `ai-code-review` `claude-code-cli` `grammy` `telegram-api` `code-quality` `software-architecture` `developer-tools` `code-insights` `automated-review` `ai-assistant` `programming-tools` `codebase-exploration`
+Telegram-бот для анализа кодовой базы с использованием RAG и Claude Code CLI.
 
-## 🚀 Contributing
+**Основные возможности:**
+- RAG-поиск по коду с LLM-ранжированием
+- Поддержка нескольких LLM провайдеров
+- Глубокий анализ через Claude Code CLI
 
-**ULTRA-MINIMALIST APPROACH**
+**Команды:**
+- `/index` - проиндексировать проект
+- `/ask <вопрос>` - RAG-запрос по коду
+- `/provider` - выбор LLM провайдера
+- Обычное сообщение - анализ через Claude Code
 
-✅ **KISS over complexity** - Simple functions over classes/patterns  
-✅ **Delete over add** - Remove code rather than add features  
-✅ **Plain over fancy** - Direct solutions over abstractions  
-✅ **Occam's Razor** - Simplest solution that works  
-
-**Before adding anything**: Ask "Is this really necessary for 5 users?"
+Подробная документация: [CLAUDE.md](CLAUDE.md)

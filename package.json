@@ -11,6 +11,7 @@
     "type-check": "tsc --noEmit",
     "test": "vitest",
     "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "lint": "prettier --check .",
     "lint:fix": "prettier --write ."
   },
@@ -29,6 +30,7 @@
   },
   "devDependencies": {
     "@types/node": "24.2.0",
+    "@vitest/coverage-v8": "2.1.8",
     "prettier": "3.6.2",
     "tsx": "4.20.3",
     "typescript": "5.9.2",

@@ -27,7 +27,9 @@ function validateUserMessageSimple(message: unknown): ValidationResult<string> {
   }
 
   // Allow common programming characters needed for code questions
-  if (!/^[a-zA-Z0-9а-яА-ЯёЁ\s.,?!:;\-()[\]"'/_@#$%^&*+=|~`\\{}]+$/.test(message)) {
+  if (
+    !/^[a-zA-Z0-9а-яА-ЯёЁ\s.,?!:;\-()[\]"'/_@#$%^&*+=|~`\\{}]+$/.test(message)
+  ) {
     return { success: false, error: "Message contains invalid characters" };
   }
 

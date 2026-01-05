@@ -207,6 +207,178 @@ export function isFileSystemError(error: unknown): error is FileSystemError {
   return error instanceof FileSystemError;
 }
 
+// =============================================================================
+// LLM Provider Errors
+// =============================================================================
+
+/**
+ * Sub-types for LLM provider errors
+ * @remarks Used to categorize different LLM failure modes
+ */
+export enum LLMErrorSubType {
+  API_ERROR = "api_error",
+  RATE_LIMIT = "rate_limit",
+  INVALID_KEY = "invalid_key",
+  MODEL_UNAVAILABLE = "model_unavailable",
+  TIMEOUT = "timeout",
+  EMBEDDING_FAILED = "embedding_failed",
+  COMPLETION_FAILED = "completion_failed",
+}
+
+/**
+ * LLM Provider error for API and service issues
+ * @remarks Handles various LLM-specific failure scenarios with user-friendly messages
+ *
+ * @example
+ * ```typescript
+ * throw new LLMError(
+ *   "OpenAI API returned 429",
+ *   LLMErrorSubType.RATE_LIMIT,
+ *   "openai",
+ *   { retryAfter: 60 }
+ * );
+ * ```
+ */
+export class LLMError extends AppError {
+  readonly code = "LLM_ERROR";
+  readonly category = ErrorCategory.EXTERNAL;
+  readonly severity: ErrorSeverity;
+  readonly userMessage: string;
+
+  constructor(
+    message: string,
+    public readonly subType: LLMErrorSubType,
+    public readonly provider: string,
+    context?: Record<string, unknown>,
+    originalError?: Error
+  ) {
+    super(message, context, originalError);
+
+    switch (subType) {
+      case LLMErrorSubType.RATE_LIMIT:
+        this.severity = ErrorSeverity.MEDIUM;
+        this.userMessage = `${provider} rate limit exceeded. Please wait a moment.`;
+        break;
+      case LLMErrorSubType.INVALID_KEY:
+        this.severity = ErrorSeverity.HIGH;
+        this.userMessage = `Invalid ${provider} API key. Contact administrator.`;
+        break;
+      case LLMErrorSubType.MODEL_UNAVAILABLE:
+        this.severity = ErrorSeverity.MEDIUM;
+        this.userMessage = `${provider} model unavailable. Try a different provider.`;
+        break;
+      case LLMErrorSubType.TIMEOUT:
+        this.severity = ErrorSeverity.MEDIUM;
+        this.userMessage = `${provider} request timed out. Please try again.`;
+        break;
+      case LLMErrorSubType.EMBEDDING_FAILED:
+        this.severity = ErrorSeverity.MEDIUM;
+        this.userMessage = `${provider} embedding generation failed. Please try again.`;
+        break;
+      case LLMErrorSubType.COMPLETION_FAILED:
+        this.severity = ErrorSeverity.MEDIUM;
+        this.userMessage = `${provider} completion failed. Please try again.`;
+        break;
+      case LLMErrorSubType.API_ERROR:
+      default:
+        this.severity = ErrorSeverity.MEDIUM;
+        this.userMessage = `${provider} error. Please try again later.`;
+    }
+  }
+}
+
+/**
+ * Type guard for LLMError
+ * @param error - Unknown error to check
+ * @returns True if error is LLMError instance
+ */
+export function isLLMError(error: unknown): error is LLMError {
+  return error instanceof LLMError;
+}
+
+// =============================================================================
+// RAG Pipeline Errors
+// =============================================================================
+
+/**
+ * Sub-types for RAG pipeline errors
+ * @remarks Used to categorize different RAG failure modes
+ */
+export enum RAGErrorSubType {
+  INDEX_NOT_FOUND = "index_not_found",
+  INDEX_CORRUPTED = "index_corrupted",
+  INDEXING_FAILED = "indexing_failed",
+  QUERY_FAILED = "query_failed",
+  NO_RESULTS = "no_results",
+  EMBEDDING_FAILED = "embedding_failed",
+}
+
+/**
+ * RAG Pipeline error for indexing and query issues
+ * @remarks Handles various RAG-specific failure scenarios with user-friendly messages
+ *
+ * @example
+ * ```typescript
+ * throw new RAGError(
+ *   "Index file not found at path",
+ *   RAGErrorSubType.INDEX_NOT_FOUND,
+ *   { path: "/data/index.json" }
+ * );
+ * ```
+ */
+export class RAGError extends AppError {
+  readonly code = "RAG_ERROR";
+  readonly category = ErrorCategory.SYSTEM;
+  readonly severity: ErrorSeverity;
+  readonly userMessage: string;
+
+  constructor(
+    message: string,
+    public readonly subType: RAGErrorSubType,
+    context?: Record<string, unknown>,
+    originalError?: Error
+  ) {
+    super(message, context, originalError);
+
+    switch (subType) {
+      case RAGErrorSubType.INDEX_NOT_FOUND:
+        this.severity = ErrorSeverity.MEDIUM;
+        this.userMessage = "Code index not found. Use /index to create one.";
+        break;
+      case RAGErrorSubType.INDEX_CORRUPTED:
+        this.severity = ErrorSeverity.HIGH;
+        this.userMessage = "Code index corrupted. Please re-index with /index.";
+        break;
+      case RAGErrorSubType.INDEXING_FAILED:
+        this.severity = ErrorSeverity.HIGH;
+        this.userMessage = "Failed to index codebase. Check project path.";
+        break;
+      case RAGErrorSubType.QUERY_FAILED:
+        this.severity = ErrorSeverity.MEDIUM;
+        this.userMessage = "Query failed. Please try again.";
+        break;
+      case RAGErrorSubType.NO_RESULTS:
+        this.severity = ErrorSeverity.LOW;
+        this.userMessage =
+          "No relevant code found. Try rephrasing your question.";
+        break;
+      case RAGErrorSubType.EMBEDDING_FAILED:
+        this.severity = ErrorSeverity.MEDIUM;
+        this.userMessage = "Failed to generate embeddings. Check LLM provider.";
+        break;
+    }
+  }
+}
+
+/**
+ * Type guard for RAGError
+ * @param error - Unknown error to check
+ * @returns True if error is RAGError instance
+ */
+export function isRAGError(error: unknown): error is RAGError {
+  return error instanceof RAGError;
+}
+
 export interface SimpleErrorHandler {
   handle(error: unknown): { userMessage: string; shouldRetry: boolean };
 }

@@ -82,3 +82,79 @@ export function asPositiveNumber(value: number): PositiveNumber {
   }
   return value as PositiveNumber;
 }
+
+// =============================================================================
+// Re-export LLM and RAG types for convenience
+// =============================================================================
+
+export type { LLMProviderType } from "./llm/types.js";
+export type { RAGConfig } from "./rag/types.js";
+
+// =============================================================================
+// Extended Configuration for Multi-LLM Support
+// =============================================================================
+
+/**
+ * API keys for supported LLM providers
+ * @remarks All keys are optional - only configure providers you plan to use
+ */
+export interface LLMApiKeys {
+  readonly openai?: string | undefined;
+  readonly gemini?: string | undefined;
+  readonly anthropic?: string | undefined;
+  readonly perplexity?: string | undefined;
+  readonly jina?: string | undefined;
+}
+
+/**
+ * Extended configuration with LLM and RAG settings
+ * @remarks Extends base Config with multi-provider support
+ */
+export interface ExtendedConfig extends Config {
+  /** API keys for LLM providers */
+  readonly llmApiKeys: LLMApiKeys;
+  /** Default LLM provider for completions (excludes claude-code) */
+  readonly defaultLLMProvider: "openai" | "gemini" | "anthropic" | "perplexity";
+  /** Path to store RAG index files */
+  readonly ragStorePath: string;
+  /** RAG pipeline configuration */
+  readonly ragConfig: import("./rag/types.js").RAGConfig;
+}
+
+// =============================================================================
+// User Preferences (per Telegram user)
+// =============================================================================
+
+/**
+ * Per-user preferences stored in file system
+ * @remarks Allows users to select their preferred LLM provider
+ */
+export interface UserPreferences {
+  /** Telegram user ID */
+  readonly userId: number;
+  /** User's preferred LLM provider for completions */
+  readonly preferredProvider: "openai" | "gemini" | "anthropic" | "perplexity";
+  /** When preferences were first created */
+  readonly createdAt: Date;
+  /** When preferences were last updated */
+  readonly updatedAt: Date;
+}
+
+// =============================================================================
+// RAG Status Types
+// =============================================================================
+
+/**
+ * Current status of RAG index for a project
+ * @remarks Used to check if project needs (re)indexing
+ */
+export interface RAGStatus {
+  /** Whether the project has been indexed */
+  readonly indexed: boolean;
+  /** Number of code chunks in the index */
+  readonly chunkCount: number;
+  /** ISO timestamp of last indexing, null if never indexed */
+  readonly lastIndexed: string | null;
+  /** Path to the indexed project, null if not indexed */
+  readonly projectPath: string | null;
+}
