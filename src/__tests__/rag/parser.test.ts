@@ -230,14 +230,15 @@ describe("parser.ts", () => {
         const result = await parseTypeScriptFile(filePath);
 
         expect(result).toHaveLength(1);
-        expect(result[0]).toMatchObject({
+        const first = result[0]!;
+        expect(first).toMatchObject({
           name: "greet",
           type: "function",
           filePath,
         });
-        expect(result[0].code).toContain("export function greet");
-        expect(result[0].startLine).toBeGreaterThan(0);
-        expect(result[0].endLine).toBeGreaterThanOrEqual(result[0].startLine);
+        expect(first.code).toContain("export function greet");
+        expect(first.startLine).toBeGreaterThan(0);
+        expect(first.endLine).toBeGreaterThanOrEqual(first.startLine);
       });
 
       it("should extract class declaration as ParsedEntity with type 'class'", async () => {
@@ -247,14 +248,15 @@ describe("parser.ts", () => {
         const result = await parseTypeScriptFile(filePath);
 
         expect(result).toHaveLength(1);
-        expect(result[0]).toMatchObject({
+        const first = result[0]!;
+        expect(first).toMatchObject({
           name: "UserService",
           type: "class",
           filePath,
         });
-        expect(result[0].code).toContain("export class UserService");
-        expect(result[0].code).toContain("getUser");
-        expect(result[0].code).toContain("addUser");
+        expect(first.code).toContain("export class UserService");
+        expect(first.code).toContain("getUser");
+        expect(first.code).toContain("addUser");
       });
 
       it("should extract interface declaration as ParsedEntity with type 'interface'", async () => {
@@ -264,12 +266,13 @@ describe("parser.ts", () => {
         const result = await parseTypeScriptFile(filePath);
 
         expect(result).toHaveLength(1);
-        expect(result[0]).toMatchObject({
+        const first = result[0]!;
+        expect(first).toMatchObject({
           name: "User",
           type: "interface",
           filePath,
         });
-        expect(result[0].code).toContain("export interface User");
+        expect(first.code).toContain("export interface User");
       });
 
       it("should extract type alias as ParsedEntity with type 'type'", async () => {
@@ -297,12 +300,13 @@ describe("parser.ts", () => {
         const result = await parseTypeScriptFile(filePath);
 
         expect(result).toHaveLength(1);
-        expect(result[0]).toMatchObject({
+        const first = result[0]!;
+        expect(first).toMatchObject({
           name: "Status",
           type: "constant",
           filePath,
         });
-        expect(result[0].code).toContain("export enum Status");
+        expect(first.code).toContain("export enum Status");
       });
 
       it("should extract variable statement (export const) as ParsedEntity with type 'constant'", async () => {

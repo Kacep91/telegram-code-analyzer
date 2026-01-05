@@ -202,6 +202,75 @@ describe("utils.ts", () => {
       logger.info("default level message");
       expect(consoleSpy).toHaveBeenCalled();
     });
+
+    it("should use INFO as default for unknown log level", async () => {
+      process.env.LOG_LEVEL = "UNKNOWN_LEVEL";
+      process.env.NODE_ENV = "development";
+      vi.resetModules();
+
+      const { logger } = await import("../utils.js");
+      const consoleSpy = vi.spyOn(console, "log");
+
+      logger.info("should appear with unknown level");
+      expect(consoleSpy).toHaveBeenCalled();
+    });
+
+    it("should pass additional arguments to console methods", async () => {
+      process.env.LOG_LEVEL = "DEBUG";
+      process.env.NODE_ENV = "development";
+      vi.resetModules();
+
+      const { logger } = await import("../utils.js");
+      const consoleSpy = vi.spyOn(console, "log");
+
+      logger.debug("message", { extra: "data" }, 123);
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining("message"),
+        { extra: "data" },
+        123
+      );
+    });
+
+    it("should suppress debug when log level is INFO", async () => {
+      process.env.LOG_LEVEL = "INFO";
+      process.env.NODE_ENV = "development";
+      vi.resetModules();
+
+      const { logger } = await import("../utils.js");
+      const consoleSpy = vi.spyOn(console, "log");
+
+      logger.debug("should not appear");
+      expect(consoleSpy).not.toHaveBeenCalled();
+    });
+
+    it("should suppress info and debug when log level is WARN", async () => {
+      process.env.LOG_LEVEL = "WARN";
+      process.env.NODE_ENV = "development";
+      vi.resetModules();
+
+      const { logger } = await import("../utils.js");
+      const consoleLogSpy = vi.spyOn(console, "log");
+
+      logger.debug("should not appear");
+      logger.info("should not appear either");
+      expect(consoleLogSpy).not.toHaveBeenCalled();
+    });
+
+    it("should suppress all except error when log level is ERROR", async () => {
+      process.env.LOG_LEVEL = "ERROR";
+      process.env.NODE_ENV = "development";
+      vi.resetModules();
+
+      const { logger } = await import("../utils.js");
+      const consoleLogSpy = vi.spyOn(console, "log");
+      const consoleWarnSpy = vi.spyOn(console, "warn");
+
+      logger.debug("should not appear");
+      logger.info("should not appear");
+      logger.warn("should not appear");
+      expect(consoleLogSpy).not.toHaveBeenCalled();
+      expect(consoleWarnSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe("loadConfig", () => {
@@ -288,6 +357,87 @@ describe("utils.ts", () => {
       const config = loadConfig();
       expect(config.authorizedUsers).toEqual([123, 456]);
     });
+
+    it("should use default for invalid CLAUDE_TIMEOUT values", async () => {
+      process.env.TELEGRAM_BOT_TOKEN = "test-token";
+      process.env.AUTHORIZED_USERS = "123";
+      process.env.PROJECT_PATH = "/test";
+      process.env.CLAUDE_TIMEOUT = "invalid";
+      vi.resetModules();
+
+      const { loadConfig } = await import("../utils.js");
+      const config = loadConfig();
+      expect(config.claudeTimeout).toBe(300000);
+    });
+
+    it("should use default for negative CLAUDE_TIMEOUT values", async () => {
+      process.env.TELEGRAM_BOT_TOKEN = "test-token";
+      process.env.AUTHORIZED_USERS = "123";
+      process.env.PROJECT_PATH = "/test";
+      process.env.CLAUDE_TIMEOUT = "-1000";
+      vi.resetModules();
+
+      const { loadConfig } = await import("../utils.js");
+      const config = loadConfig();
+      expect(config.claudeTimeout).toBe(300000);
+    });
+
+    it("should use default for zero CLAUDE_TIMEOUT value", async () => {
+      process.env.TELEGRAM_BOT_TOKEN = "test-token";
+      process.env.AUTHORIZED_USERS = "123";
+      process.env.PROJECT_PATH = "/test";
+      process.env.CLAUDE_TIMEOUT = "0";
+      vi.resetModules();
+
+      const { loadConfig } = await import("../utils.js");
+      const config = loadConfig();
+      expect(config.claudeTimeout).toBe(300000);
+    });
+
+    it("should parse rate limiter cleanup interval from environment", async () => {
+      process.env.TELEGRAM_BOT_TOKEN = "test-token";
+      process.env.AUTHORIZED_USERS = "123";
+      process.env.PROJECT_PATH = "/test";
+      process.env.RATE_LIMIT_CLEANUP_INTERVAL_MS = "600000";
+      vi.resetModules();
+
+      const { loadConfig } = await import("../utils.js");
+      const config = loadConfig();
+
+      expect(config.rateLimiter.cleanupIntervalMs).toBe(600000);
+    });
+
+    it("should use default values for invalid rate limiter env vars", async () => {
+      process.env.TELEGRAM_BOT_TOKEN = "test-token";
+      process.env.AUTHORIZED_USERS = "123";
+      process.env.PROJECT_PATH = "/test";
+      process.env.RATE_LIMIT_MAX_REQUESTS = "invalid";
+      process.env.RATE_LIMIT_WINDOW_MS = "not-a-number";
+      process.env.RATE_LIMIT_CLEANUP_INTERVAL_MS = "abc";
+      vi.resetModules();
+
+      const { loadConfig } = await import("../utils.js");
+      const config = loadConfig();
+
+      expect(config.rateLimiter.maxRequests).toBe(10);
+      expect(config.rateLimiter.windowMs).toBe(60000);
+      expect(config.rateLimiter.cleanupIntervalMs).toBe(300000);
+    });
+
+    it("should use default values for zero rate limiter env vars", async () => {
+      process.env.TELEGRAM_BOT_TOKEN = "test-token";
+      process.env.AUTHORIZED_USERS = "123";
+      process.env.PROJECT_PATH = "/test";
+      process.env.RATE_LIMIT_MAX_REQUESTS = "0";
+      process.env.RATE_LIMIT_WINDOW_MS = "-100";
+      vi.resetModules();
+
+      const { loadConfig } = await import("../utils.js");
+      const config = loadConfig();
+
+      expect(config.rateLimiter.maxRequests).toBe(10);
+      expect(config.rateLimiter.windowMs).toBe(60000);
+    });
   });
 
   describe("loadExtendedConfig", () => {
@@ -364,6 +514,127 @@ describe("utils.ts", () => {
       expect(config.llmApiKeys.gemini).toBe("gemini-key");
       expect(config.llmApiKeys.anthropic).toBe("anthropic-key");
       expect(config.llmApiKeys.perplexity).toBe("perplexity-key");
+    });
+
+    it("should load JINA API key when configured", async () => {
+      process.env.OPENAI_API_KEY = "sk-openai";
+      process.env.JINA_API_KEY = "jina-key";
+      process.env.DEFAULT_LLM_PROVIDER = "openai";
+      vi.resetModules();
+
+      const { loadExtendedConfig } = await import("../utils.js");
+      const config = loadExtendedConfig();
+
+      expect(config.llmApiKeys.jina).toBe("jina-key");
+    });
+
+    it("should use default values for RAG config when env vars are not set", async () => {
+      process.env.OPENAI_API_KEY = "sk-test";
+      process.env.DEFAULT_LLM_PROVIDER = "openai";
+      delete process.env.RAG_CHUNK_SIZE;
+      delete process.env.RAG_CHUNK_OVERLAP;
+      delete process.env.RAG_TOP_K;
+      delete process.env.RAG_RERANK_TOP_K;
+      delete process.env.RAG_VECTOR_WEIGHT;
+      delete process.env.RAG_LLM_WEIGHT;
+      vi.resetModules();
+
+      const { loadExtendedConfig } = await import("../utils.js");
+      const config = loadExtendedConfig();
+
+      expect(config.ragConfig.chunkSize).toBe(300);
+      expect(config.ragConfig.chunkOverlap).toBe(50);
+      expect(config.ragConfig.topK).toBe(15);
+      expect(config.ragConfig.rerankTopK).toBe(5);
+      expect(config.ragConfig.vectorWeight).toBe(0.3);
+      expect(config.ragConfig.llmWeight).toBe(0.7);
+    });
+
+    it("should load RAG_CHUNK_OVERLAP and RAG_RERANK_TOP_K from environment", async () => {
+      process.env.OPENAI_API_KEY = "sk-test";
+      process.env.DEFAULT_LLM_PROVIDER = "openai";
+      process.env.RAG_CHUNK_OVERLAP = "100";
+      process.env.RAG_RERANK_TOP_K = "10";
+      vi.resetModules();
+
+      const { loadExtendedConfig } = await import("../utils.js");
+      const config = loadExtendedConfig();
+
+      expect(config.ragConfig.chunkOverlap).toBe(100);
+      expect(config.ragConfig.rerankTopK).toBe(10);
+    });
+
+    it("should use default for invalid float env values", async () => {
+      process.env.OPENAI_API_KEY = "sk-test";
+      process.env.DEFAULT_LLM_PROVIDER = "openai";
+      process.env.RAG_VECTOR_WEIGHT = "invalid";
+      process.env.RAG_LLM_WEIGHT = "not-a-number";
+      vi.resetModules();
+
+      const { loadExtendedConfig } = await import("../utils.js");
+      const config = loadExtendedConfig();
+
+      expect(config.ragConfig.vectorWeight).toBe(0.3);
+      expect(config.ragConfig.llmWeight).toBe(0.7);
+    });
+
+    it("should use custom RAG_STORE_PATH when configured", async () => {
+      process.env.OPENAI_API_KEY = "sk-test";
+      process.env.DEFAULT_LLM_PROVIDER = "openai";
+      process.env.RAG_STORE_PATH = "/custom/rag/path";
+      vi.resetModules();
+
+      const { loadExtendedConfig } = await import("../utils.js");
+      const config = loadExtendedConfig();
+
+      expect(config.ragStorePath).toBe("/custom/rag/path");
+    });
+
+    it("should work with gemini as default provider", async () => {
+      process.env.GEMINI_API_KEY = "gemini-key";
+      process.env.DEFAULT_LLM_PROVIDER = "gemini";
+      vi.resetModules();
+
+      const { loadExtendedConfig } = await import("../utils.js");
+      const config = loadExtendedConfig();
+
+      expect(config.defaultLLMProvider).toBe("gemini");
+      expect(config.llmApiKeys.gemini).toBe("gemini-key");
+    });
+
+    it("should work with anthropic as default provider", async () => {
+      process.env.ANTHROPIC_API_KEY = "anthropic-key";
+      process.env.DEFAULT_LLM_PROVIDER = "anthropic";
+      vi.resetModules();
+
+      const { loadExtendedConfig } = await import("../utils.js");
+      const config = loadExtendedConfig();
+
+      expect(config.defaultLLMProvider).toBe("anthropic");
+      expect(config.llmApiKeys.anthropic).toBe("anthropic-key");
+    });
+
+    it("should work with perplexity as default provider", async () => {
+      process.env.PERPLEXITY_API_KEY = "perplexity-key";
+      process.env.DEFAULT_LLM_PROVIDER = "perplexity";
+      vi.resetModules();
+
+      const { loadExtendedConfig } = await import("../utils.js");
+      const config = loadExtendedConfig();
+
+      expect(config.defaultLLMProvider).toBe("perplexity");
+      expect(config.llmApiKeys.perplexity).toBe("perplexity-key");
+    });
+
+    it("should use openai as default provider when not specified", async () => {
+      process.env.OPENAI_API_KEY = "sk-test";
+      delete process.env.DEFAULT_LLM_PROVIDER;
+      vi.resetModules();
+
+      const { loadExtendedConfig } = await import("../utils.js");
+      const config = loadExtendedConfig();
+
+      expect(config.defaultLLMProvider).toBe("openai");
     });
   });
 

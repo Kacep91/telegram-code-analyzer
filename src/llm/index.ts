@@ -134,6 +134,10 @@ export function createCompletionProvider(
       throw new Error(
         "claude-code provider must be created directly, not through factory"
       );
+    case "jina":
+      throw new Error(
+        "Jina does not support completions. Use embed() instead."
+      );
     default: {
       const exhaustiveCheck: never = type;
       throw new Error(`Unknown LLM provider type: ${exhaustiveCheck}`);
@@ -207,6 +211,10 @@ export function createFullProvider(
       return new OpenAIProvider(apiKey);
     case "gemini":
       return new GeminiProvider({ apiKey });
+    case "jina":
+      throw new Error(
+        "Jina only supports embeddings. Use createEmbeddingProvider instead."
+      );
     default: {
       const exhaustiveCheck: never = type;
       throw new Error(`Unknown full provider type: ${exhaustiveCheck}`);

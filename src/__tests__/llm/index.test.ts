@@ -8,60 +8,125 @@ import type {
 // Mock setup - must be before imports that use mocked modules
 // =============================================================================
 
-// Mock checkAvailability functions to be accessible in tests
-const mockOpenAICheckAvailability = vi.fn();
-const mockGeminiCheckAvailability = vi.fn();
-const mockAnthropicCheckAvailability = vi.fn();
-const mockPerplexityCheckAvailability = vi.fn();
+// Use vi.hoisted to create mock functions that are accessible in vi.mock factories
+const {
+  mockOpenAICheckAvailability,
+  mockGeminiCheckAvailability,
+  mockAnthropicCheckAvailability,
+  mockPerplexityCheckAvailability,
+  openAIConstructorError,
+  MockOpenAIProvider,
+  MockGeminiProvider,
+  MockAnthropicProvider,
+  MockPerplexityProvider,
+} = vi.hoisted(() => {
+  const mockOpenAICheckAvailability = vi.fn();
+  const mockGeminiCheckAvailability = vi.fn();
+  const mockAnthropicCheckAvailability = vi.fn();
+  const mockPerplexityCheckAvailability = vi.fn();
 
-vi.mock("../../llm/openai.js", () => {
-  const MockOpenAIProvider = vi.fn(() => ({
-    name: "openai" as const,
-    complete: vi.fn(),
-    embed: vi.fn(),
-    embedBatch: vi.fn(),
-    checkAvailability: mockOpenAICheckAvailability,
-  }));
-  return { OpenAIProvider: MockOpenAIProvider };
-});
+  // Shared state for controlling constructor behavior
+  const openAIConstructorError: { value: Error | string | null } = {
+    value: null,
+  };
 
-vi.mock("../../llm/gemini.js", () => {
-  const MockGeminiProvider = vi.fn(() => ({
-    name: "gemini" as const,
-    complete: vi.fn(),
-    embed: vi.fn(),
-    embedBatch: vi.fn(),
-    checkAvailability: mockGeminiCheckAvailability,
-  }));
+  // Create mock classes that can be instantiated with `new`
+  const MockOpenAIProvider = vi.fn().mockImplementation(function (
+    this: {
+      name: "openai";
+      complete: ReturnType<typeof vi.fn>;
+      embed: ReturnType<typeof vi.fn>;
+      embedBatch: ReturnType<typeof vi.fn>;
+      checkAvailability: ReturnType<typeof vi.fn>;
+    },
+    _apiKey: string
+  ) {
+    if (openAIConstructorError.value !== null) {
+      const error = openAIConstructorError.value;
+      openAIConstructorError.value = null; // Reset after throwing
+      throw error;
+    }
+    this.name = "openai";
+    this.complete = vi.fn();
+    this.embed = vi.fn();
+    this.embedBatch = vi.fn();
+    this.checkAvailability = mockOpenAICheckAvailability;
+  });
+
+  const MockGeminiProvider = vi.fn().mockImplementation(function (
+    this: {
+      name: "gemini";
+      complete: ReturnType<typeof vi.fn>;
+      embed: ReturnType<typeof vi.fn>;
+      embedBatch: ReturnType<typeof vi.fn>;
+      checkAvailability: ReturnType<typeof vi.fn>;
+    },
+    _config: { apiKey: string }
+  ) {
+    this.name = "gemini";
+    this.complete = vi.fn();
+    this.embed = vi.fn();
+    this.embedBatch = vi.fn();
+    this.checkAvailability = mockGeminiCheckAvailability;
+  });
+
+  const MockAnthropicProvider = vi.fn().mockImplementation(function (
+    this: {
+      name: "anthropic";
+      complete: ReturnType<typeof vi.fn>;
+      checkAvailability: ReturnType<typeof vi.fn>;
+    },
+    _apiKey: string
+  ) {
+    this.name = "anthropic";
+    this.complete = vi.fn();
+    this.checkAvailability = mockAnthropicCheckAvailability;
+  });
+
+  const MockPerplexityProvider = vi.fn().mockImplementation(function (
+    this: {
+      name: "perplexity";
+      complete: ReturnType<typeof vi.fn>;
+      checkAvailability: ReturnType<typeof vi.fn>;
+    },
+    _config: { apiKey: string }
+  ) {
+    this.name = "perplexity";
+    this.complete = vi.fn();
+    this.checkAvailability = mockPerplexityCheckAvailability;
+  });
+
   return {
-    GeminiProvider: MockGeminiProvider,
-    GeminiProviderConfigSchema: {},
+    mockOpenAICheckAvailability,
+    mockGeminiCheckAvailability,
+    mockAnthropicCheckAvailability,
+    mockPerplexityCheckAvailability,
+    openAIConstructorError,
+    MockOpenAIProvider,
+    MockGeminiProvider,
+    MockAnthropicProvider,
+    MockPerplexityProvider,
   };
 });
 
-vi.mock("../../llm/anthropic.js", () => {
-  const MockAnthropicProvider = vi.fn(() => ({
-    name: "anthropic" as const,
-    complete: vi.fn(),
-    checkAvailability: mockAnthropicCheckAvailability,
-  }));
-  return {
-    AnthropicProvider: MockAnthropicProvider,
-    AnthropicModelSchema: {},
-  };
-});
+vi.mock("../../llm/openai.js", () => ({
+  OpenAIProvider: MockOpenAIProvider,
+}));
 
-vi.mock("../../llm/perplexity.js", () => {
-  const MockPerplexityProvider = vi.fn(() => ({
-    name: "perplexity" as const,
-    complete: vi.fn(),
-    checkAvailability: mockPerplexityCheckAvailability,
-  }));
-  return {
-    PerplexityProvider: MockPerplexityProvider,
-    PerplexityModelSchema: {},
-  };
-});
+vi.mock("../../llm/gemini.js", () => ({
+  GeminiProvider: MockGeminiProvider,
+  GeminiProviderConfigSchema: {},
+}));
+
+vi.mock("../../llm/anthropic.js", () => ({
+  AnthropicProvider: MockAnthropicProvider,
+  AnthropicModelSchema: {},
+}));
+
+vi.mock("../../llm/perplexity.js", () => ({
+  PerplexityProvider: MockPerplexityProvider,
+  PerplexityModelSchema: {},
+}));
 
 // Import after mocks are set up
 import {
@@ -435,9 +500,7 @@ describe("LLM Index Module", () => {
     });
 
     it("should handle errors during provider creation", async () => {
-      vi.mocked(OpenAIProvider).mockImplementationOnce(() => {
-        throw new Error("Failed to initialize provider");
-      });
+      openAIConstructorError.value = new Error("Failed to initialize provider");
 
       const result = await checkProviderAvailability("openai", testApiKey);
 
@@ -446,9 +509,7 @@ describe("LLM Index Module", () => {
     });
 
     it("should handle unknown errors gracefully", async () => {
-      vi.mocked(OpenAIProvider).mockImplementationOnce(() => {
-        throw "Unknown error string";
-      });
+      openAIConstructorError.value = "Unknown error string";
 
       const result = await checkProviderAvailability("openai", testApiKey);
 

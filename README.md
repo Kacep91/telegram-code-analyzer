@@ -10,6 +10,26 @@ Telegram bot for codebase analysis using RAG (Retrieval-Augmented Generation) an
 - **Telegram interface** - Natural language queries
 - **Whitelist auth** - Access control via Telegram user IDs
 
+## Requirements
+
+- **Node.js 18+** (LTS recommended, tested on v22)
+- **npm 9+** or yarn/pnpm
+- **Claude Code CLI** (optional, for deep analysis)
+
+### Installation
+
+1. Install Node.js 18+ from https://nodejs.org/
+2. Clone repository and install dependencies:
+   ```bash
+   git clone <repository-url>
+   cd telegram-code-analyzer
+   npm install
+   ```
+3. (Optional) Install Claude Code CLI:
+   ```bash
+   npm install -g @anthropic-ai/claude-code
+   ```
+
 ## Quick Start
 
 ```bash

@@ -223,6 +223,8 @@ export enum LLMErrorSubType {
   TIMEOUT = "timeout",
   EMBEDDING_FAILED = "embedding_failed",
   COMPLETION_FAILED = "completion_failed",
+  INVALID_RESPONSE = "invalid_response",
+  AUTH_FAILED = "auth_failed",
 }
 
 /**
@@ -278,6 +280,14 @@ export class LLMError extends AppError {
       case LLMErrorSubType.COMPLETION_FAILED:
         this.severity = ErrorSeverity.MEDIUM;
         this.userMessage = `${provider} completion failed. Please try again.`;
+        break;
+      case LLMErrorSubType.INVALID_RESPONSE:
+        this.severity = ErrorSeverity.MEDIUM;
+        this.userMessage = `${provider} returned invalid response. Please try again.`;
+        break;
+      case LLMErrorSubType.AUTH_FAILED:
+        this.severity = ErrorSeverity.HIGH;
+        this.userMessage = `${provider} authentication failed. Check API key.`;
         break;
       case LLMErrorSubType.API_ERROR:
       default:

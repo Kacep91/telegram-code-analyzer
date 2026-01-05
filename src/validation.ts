@@ -27,8 +27,10 @@ function validateUserMessageSimple(message: unknown): ValidationResult<string> {
   }
 
   // Allow common programming characters needed for code questions
+  // WARNING: <> symbols allowed intentionally - protection relies on suspiciousPatterns check below
+  // Do NOT remove suspiciousPatterns without updating this regex to exclude <>
   if (
-    !/^[a-zA-Z0-9а-яА-ЯёЁ\s.,?!:;\-()[\]"'/_@#$%^&*+=|~`\\{}]+$/.test(message)
+    !/^[a-zA-Z0-9а-яА-ЯёЁ\s.,?!:;\-()[\]"'/_@#$%^&*+=|~`\\{}<>]+$/.test(message)
   ) {
     return { success: false, error: "Message contains invalid characters" };
   }
@@ -119,8 +121,10 @@ export interface ValidationResult<T> {
 export function sanitizeMessage(message: string): string {
   return message
     .trim()
-    .replace(/\s+/g, " ")
+    // Order matters: remove <> first, then collapse spaces that may appear
+    // (e.g., "Hello > world" -> "Hello  world" -> "Hello world")
     .replace(/[<>]/g, "")
+    .replace(/\s+/g, " ")
     .substring(0, VALIDATION.MESSAGE_MAX_LENGTH);
 }
 

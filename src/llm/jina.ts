@@ -113,7 +113,7 @@ export class JinaEmbeddingProvider implements LLMEmbeddingProvider {
           response.status === 401
             ? LLMErrorSubType.AUTH_FAILED
             : response.status === 429
-              ? LLMErrorSubType.RATE_LIMITED
+              ? LLMErrorSubType.RATE_LIMIT
               : LLMErrorSubType.API_ERROR,
           "jina"
         );

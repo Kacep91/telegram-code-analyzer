@@ -1,19 +1,41 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { CLITool } from "../../cli/types.js";
+
+// Use vi.hoisted() to create shared mock functions that are available during vi.mock() hoisting
+const {
+  claudeCodeIsAvailable,
+  claudeCodeExecute,
+  codexIsAvailable,
+  codexExecute,
+} = vi.hoisted(() => ({
+  claudeCodeIsAvailable: vi.fn<[], Promise<boolean>>(),
+  claudeCodeExecute: vi.fn(),
+  codexIsAvailable: vi.fn<[], Promise<boolean>>(),
+  codexExecute: vi.fn(),
+}));
 
 // Mock ClaudeCodeCLI
 vi.mock("../../cli/claude-code.js", () => {
-  const mockClaudeCodeCLI = vi.fn();
   return {
-    ClaudeCodeCLI: mockClaudeCodeCLI,
+    ClaudeCodeCLI: vi.fn().mockImplementation(function (this: unknown) {
+      return {
+        name: "claude-code",
+        isAvailable: claudeCodeIsAvailable,
+        execute: claudeCodeExecute,
+      };
+    }),
   };
 });
 
 // Mock CodexCLI
 vi.mock("../../cli/codex.js", () => {
-  const mockCodexCLI = vi.fn();
   return {
-    CodexCLI: mockCodexCLI,
+    CodexCLI: vi.fn().mockImplementation(function (this: unknown) {
+      return {
+        name: "codex",
+        isAvailable: codexIsAvailable,
+        execute: codexExecute,
+      };
+    }),
   };
 });
 
@@ -26,34 +48,9 @@ import {
 import { ClaudeCodeCLI } from "../../cli/claude-code.js";
 import { CodexCLI } from "../../cli/codex.js";
 
-// Type for mocked constructor
-type MockedClass<T> = ReturnType<typeof vi.fn> & {
-  mockImplementation: (fn: () => T) => void;
-};
-
 describe("CLI Index Module", () => {
-  const mockClaudeCodeInstance: CLITool = {
-    name: "claude-code",
-    isAvailable: vi.fn(),
-    execute: vi.fn(),
-  };
-
-  const mockCodexInstance: CLITool = {
-    name: "codex",
-    isAvailable: vi.fn(),
-    execute: vi.fn(),
-  };
-
   beforeEach(() => {
     vi.clearAllMocks();
-
-    // Configure mocks to return instances
-    (ClaudeCodeCLI as MockedClass<CLITool>).mockImplementation(
-      () => mockClaudeCodeInstance
-    );
-    (CodexCLI as MockedClass<CLITool>).mockImplementation(
-      () => mockCodexInstance
-    );
   });
 
   afterEach(() => {
@@ -65,7 +62,6 @@ describe("CLI Index Module", () => {
       const tool = createCLITool("claude-code");
 
       expect(ClaudeCodeCLI).toHaveBeenCalledTimes(1);
-      expect(tool).toBe(mockClaudeCodeInstance);
       expect(tool.name).toBe("claude-code");
     });
 
@@ -73,7 +69,6 @@ describe("CLI Index Module", () => {
       const tool = createCLITool("codex");
 
       expect(CodexCLI).toHaveBeenCalledTimes(1);
-      expect(tool).toBe(mockCodexInstance);
       expect(tool.name).toBe("codex");
     });
 
@@ -96,8 +91,8 @@ describe("CLI Index Module", () => {
 
   describe("getAvailableCLITools", () => {
     it("should return both tools when all are available", async () => {
-      vi.mocked(mockClaudeCodeInstance.isAvailable).mockResolvedValue(true);
-      vi.mocked(mockCodexInstance.isAvailable).mockResolvedValue(true);
+      claudeCodeIsAvailable.mockResolvedValue(true);
+      codexIsAvailable.mockResolvedValue(true);
 
       const tools = await getAvailableCLITools();
 
@@ -107,8 +102,8 @@ describe("CLI Index Module", () => {
     });
 
     it("should return empty array when no tools are available", async () => {
-      vi.mocked(mockClaudeCodeInstance.isAvailable).mockResolvedValue(false);
-      vi.mocked(mockCodexInstance.isAvailable).mockResolvedValue(false);
+      claudeCodeIsAvailable.mockResolvedValue(false);
+      codexIsAvailable.mockResolvedValue(false);
 
       const tools = await getAvailableCLITools();
 
@@ -117,8 +112,8 @@ describe("CLI Index Module", () => {
     });
 
     it("should return only available tools when partially available", async () => {
-      vi.mocked(mockClaudeCodeInstance.isAvailable).mockResolvedValue(true);
-      vi.mocked(mockCodexInstance.isAvailable).mockResolvedValue(false);
+      claudeCodeIsAvailable.mockResolvedValue(true);
+      codexIsAvailable.mockResolvedValue(false);
 
       const tools = await getAvailableCLITools();
 
@@ -129,7 +124,7 @@ describe("CLI Index Module", () => {
 
   describe("getCLIToolIfAvailable", () => {
     it("should return tool when it is available", async () => {
-      vi.mocked(mockClaudeCodeInstance.isAvailable).mockResolvedValue(true);
+      claudeCodeIsAvailable.mockResolvedValue(true);
 
       const tool = await getCLIToolIfAvailable("claude-code");
 
@@ -138,7 +133,7 @@ describe("CLI Index Module", () => {
     });
 
     it("should return null when tool is not available", async () => {
-      vi.mocked(mockCodexInstance.isAvailable).mockResolvedValue(false);
+      codexIsAvailable.mockResolvedValue(false);
 
       const tool = await getCLIToolIfAvailable("codex");
 
@@ -146,7 +141,7 @@ describe("CLI Index Module", () => {
     });
 
     it("should pass config to createCLITool when provided", async () => {
-      vi.mocked(mockCodexInstance.isAvailable).mockResolvedValue(true);
+      codexIsAvailable.mockResolvedValue(true);
 
       await getCLIToolIfAvailable("codex", { codexMode: "full-auto" });
 

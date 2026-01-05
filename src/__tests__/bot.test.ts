@@ -11,44 +11,78 @@ import type { Message, Chat, User } from "grammy/types";
 // =============================================================================
 
 // Store captured handlers for testing actual command execution
-// Using 'any' is acceptable in test mocks to avoid grammy type complexity
+// Using vi.hoisted() to make variable available in mock factories (hoisted)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const capturedHandlers: Record<string, (...args: any[]) => Promise<void>> = {};
+const capturedHandlers = vi.hoisted(
+  () => ({} as Record<string, (...args: any[]) => Promise<void>>)
+);
 
-vi.mock("grammy", () => ({
-  Bot: vi.fn().mockImplementation(() => ({
-    catch: vi.fn(
+// Configurable mock state for RAGPipeline
+const ragMockState = vi.hoisted(() => ({
+  indexed: true,
+  queryResult: {
+    answer: "Test answer from RAG",
+    sources: [
+      {
+        chunk: {
+          id: "chunk-1",
+          content: "function test() {}",
+          type: "function",
+          name: "test",
+          filePath: "src/test.ts",
+          startLine: 1,
+          endLine: 5,
+          tokenCount: 10,
+        },
+        vectorScore: 0.9,
+        llmScore: 0.95,
+        finalScore: 0.93,
+      },
+    ],
+    tokenCount: 150,
+  },
+}));
+
+vi.mock("grammy", () => {
+  // Mock class for grammy Bot - must be a real class for 'new' to work
+  // Defined inside factory to avoid hoisting issues
+  const MockBot = class {
+    catch = vi.fn(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (handler: (...args: any[]) => Promise<void>) => {
         capturedHandlers.error = handler;
       }
-    ),
-    use: vi.fn(
+    );
+    use = vi.fn(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (handler: (...args: any[]) => Promise<void>) => {
         capturedHandlers.middleware = handler;
       }
-    ),
-    command: vi.fn(
+    );
+    command = vi.fn(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (name: string, handler: (...args: any[]) => Promise<void>) => {
         capturedHandlers[`cmd:${name}`] = handler;
       }
-    ),
-    on: vi.fn(
+    );
+    on = vi.fn(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (event: string, handler: (...args: any[]) => Promise<void>) => {
         capturedHandlers[`on:${event}`] = handler;
       }
-    ),
-  })),
-  InputFile: vi
-    .fn()
-    .mockImplementation((content: Buffer, filename: string) => ({
-      content,
-      filename,
-    })),
-}));
+    );
+  };
+
+  return {
+    Bot: MockBot,
+    InputFile: vi
+      .fn()
+      .mockImplementation((content: Buffer, filename: string) => ({
+        content,
+        filename,
+      })),
+  };
+});
 
 vi.mock("../utils.js", () => ({
   loadExtendedConfig: vi.fn(() => ({
@@ -120,49 +154,39 @@ vi.mock("../validation.js", () => ({
   sanitizeText: vi.fn((text: string) => text.trim()),
 }));
 
-vi.mock("../rag/index.js", () => ({
-  RAGPipeline: vi.fn().mockImplementation(() => ({
-    index: vi.fn().mockResolvedValue({
+vi.mock("../rag/index.js", () => {
+  // Mock class for RAGPipeline - must be a real class for 'new' to work
+  // Uses ragMockState for configurable behavior in tests
+  const MockRAGPipeline = class {
+    index = vi.fn().mockResolvedValue({
       projectPath: "/test/project",
       totalChunks: 100,
       totalTokens: 5000,
       indexedAt: new Date().toISOString(),
       version: "1.0.0",
-    }),
-    loadIndex: vi.fn().mockResolvedValue(null),
-    query: vi.fn().mockResolvedValue({
-      answer: "Test answer from RAG",
-      sources: [
-        {
-          chunk: {
-            id: "chunk-1",
-            content: "function test() {}",
-            type: "function",
-            name: "test",
-            filePath: "src/test.ts",
-            startLine: 1,
-            endLine: 5,
-            tokenCount: 10,
-          },
-          vectorScore: 0.9,
-          llmScore: 0.95,
-          finalScore: 0.93,
-        },
-      ],
-      tokenCount: 150,
-    }),
-    getStatus: vi.fn().mockReturnValue({
-      indexed: true,
-      metadata: {
-        projectPath: "/test/project",
-        totalChunks: 100,
-        totalTokens: 5000,
-        indexedAt: new Date().toISOString(),
-        version: "1.0.0",
-      },
-    }),
-  })),
-}));
+    });
+    loadIndex = vi.fn().mockResolvedValue(null);
+    query = vi.fn().mockImplementation(() =>
+      Promise.resolve(ragMockState.queryResult)
+    );
+    getStatus = vi.fn().mockImplementation(() => ({
+      indexed: ragMockState.indexed,
+      metadata: ragMockState.indexed
+        ? {
+            projectPath: "/test/project",
+            totalChunks: 100,
+            totalTokens: 5000,
+            indexedAt: new Date().toISOString(),
+            version: "1.0.0",
+          }
+        : null,
+    }));
+  };
+
+  return {
+    RAGPipeline: MockRAGPipeline,
+  };
+});
 
 vi.mock("../llm/index.js", () => ({
   createCompletionProvider: vi.fn(() => ({
@@ -205,7 +229,6 @@ import {
   RAGErrorSubType,
 } from "../errors/index.js";
 import { validateUserMessage, sanitizeText } from "../validation.js";
-import { RAGPipeline } from "../rag/index.js";
 import { getAvailableProviders, getEmbeddingProvider } from "../llm/index.js";
 import {
   createBot,
@@ -326,7 +349,45 @@ function getHandler(key: string): (...args: any[]) => Promise<void> {
 
 describe("bot.ts", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    // Reset all mocks including mockReturnValueOnce/mockImplementationOnce
+    vi.resetAllMocks();
+    // Restore default implementations for mocks that need them
+    vi.mocked(validateUserMessage).mockImplementation((message: unknown) => {
+      if (typeof message !== "string") {
+        return { success: false, error: "Message must be a string" };
+      }
+      if (message.length < 5) {
+        return { success: false, error: "Message too short" };
+      }
+      if (message.includes("<script")) {
+        return { success: false, error: "Message contains suspicious content" };
+      }
+      return { success: true, data: message };
+    });
+    vi.mocked(sanitizeText).mockImplementation((text: string) => text.trim());
+    // Reset RAG mock state to defaults
+    ragMockState.indexed = true;
+    ragMockState.queryResult = {
+      answer: "Test answer from RAG",
+      sources: [
+        {
+          chunk: {
+            id: "chunk-1",
+            content: "function test() {}",
+            type: "function",
+            name: "test",
+            filePath: "src/test.ts",
+            startLine: 1,
+            endLine: 5,
+            tokenCount: 10,
+          },
+          vectorScore: 0.9,
+          llmScore: 0.95,
+          finalScore: 0.93,
+        },
+      ],
+      tokenCount: 150,
+    };
     clearCapturedHandlers();
     resetIndexingState();
     resetRagPipeline();
@@ -334,7 +395,7 @@ describe("bot.ts", () => {
   });
 
   afterEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     clearCapturedHandlers();
     resetIndexingState();
     resetRagPipeline();
@@ -776,18 +837,8 @@ describe("bot.ts", () => {
       });
       vi.mocked(getAvailableProviders).mockReturnValue(["openai", "gemini"]);
 
-      const mockPipeline = {
-        index: vi.fn(),
-        loadIndex: vi.fn().mockResolvedValue(null),
-        query: vi.fn(),
-        getStatus: vi.fn().mockReturnValue({
-          indexed: false,
-          metadata: null,
-        }),
-      };
-      vi.mocked(RAGPipeline).mockImplementation(
-        () => mockPipeline as unknown as RAGPipeline
-      );
+      // Configure RAG mock to return not indexed
+      ragMockState.indexed = false;
 
       await getHandler("cmd:ask")(ctx);
 
@@ -804,41 +855,8 @@ describe("bot.ts", () => {
       });
       vi.mocked(getAvailableProviders).mockReturnValue(["openai", "gemini"]);
 
-      const mockPipeline = {
-        index: vi.fn(),
-        loadIndex: vi.fn().mockResolvedValue(null),
-        query: vi.fn().mockResolvedValue({
-          answer: "Test answer from RAG",
-          sources: [
-            {
-              chunk: {
-                id: "chunk-1",
-                content: "function test() {}",
-                type: "function",
-                name: "test",
-                filePath: "src/test.ts",
-                startLine: 1,
-                endLine: 5,
-                tokenCount: 10,
-              },
-              vectorScore: 0.9,
-              llmScore: 0.95,
-              finalScore: 0.93,
-            },
-          ],
-          tokenCount: 150,
-        }),
-        getStatus: vi.fn().mockReturnValue({
-          indexed: true,
-          metadata: {
-            projectPath: "/test/project",
-            totalChunks: 100,
-          },
-        }),
-      };
-      vi.mocked(RAGPipeline).mockImplementation(
-        () => mockPipeline as unknown as RAGPipeline
-      );
+      // Configure RAG mock (indexed: true is default, queryResult set in beforeEach)
+      ragMockState.indexed = true;
 
       await getHandler("cmd:ask")(ctx);
 
@@ -850,10 +868,7 @@ describe("bot.ts", () => {
 
     it("should return early when no user ID", async () => {
       const ctx = createMockContext({ from: null, match: "test query" });
-      vi.mocked(validateUserMessage).mockReturnValueOnce({
-        success: true,
-        data: "test query",
-      });
+      // Note: No mock setup for validateUserMessage - early return before validation
 
       await getHandler("cmd:ask")(ctx);
 
@@ -1220,7 +1235,11 @@ describe("bot.ts", () => {
       const pipeline = await ensureRagPipeline(mockConfig);
 
       expect(pipeline).toBeDefined();
-      expect(RAGPipeline).toHaveBeenCalled();
+      // Check that pipeline has expected methods (created from MockRAGPipeline)
+      expect(pipeline.index).toBeDefined();
+      expect(pipeline.loadIndex).toBeDefined();
+      expect(pipeline.query).toBeDefined();
+      expect(pipeline.getStatus).toBeDefined();
     });
 
     it("should reuse existing pipeline", async () => {
@@ -1249,10 +1268,9 @@ describe("bot.ts", () => {
       };
 
       const pipeline1 = await ensureRagPipeline(mockConfig);
-      vi.clearAllMocks();
       const pipeline2 = await ensureRagPipeline(mockConfig);
 
-      expect(RAGPipeline).not.toHaveBeenCalled();
+      // Same instance should be returned (singleton pattern)
       expect(pipeline1).toBe(pipeline2);
     });
   });

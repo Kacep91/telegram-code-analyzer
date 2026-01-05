@@ -709,6 +709,13 @@ describe("sanitizeMessage", () => {
     expect(result).toBe("scriptalert/script");
   });
 
+  it("should handle double spaces after removing <>", () => {
+    // Edge case: when <> removal leaves double spaces, they should be collapsed
+    const result = sanitizeMessage("Hello <> world");
+
+    expect(result).toBe("Hello world");
+  });
+
   it("should truncate to max length (2000 chars)", () => {
     const longMessage = "a".repeat(2500);
 

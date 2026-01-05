@@ -11,21 +11,40 @@ import type {
   SearchResult,
 } from "../../rag/types.js";
 
+// Hoisted mock store - создается ДО vi.mock
+const mockStoreMethods = vi.hoisted(() => ({
+  clear: vi.fn(),
+  addChunks: vi.fn(),
+  setMetadata: vi.fn(),
+  getMetadata: vi.fn().mockReturnValue(null),
+  save: vi.fn().mockResolvedValue(undefined),
+  load: vi.fn().mockResolvedValue(undefined),
+  isEmpty: vi.fn().mockReturnValue(true),
+  size: vi.fn().mockReturnValue(0),
+  search: vi.fn().mockReturnValue([]),
+  getAllChunks: vi.fn().mockReturnValue([]),
+}));
+
 // Mock dependencies before importing RAGPipeline
 vi.mock("../../rag/store.js", () => {
+  // Создаем класс-мок с инстанс-методами из mockStoreMethods
+  class MockCodeVectorStore {
+    clear = mockStoreMethods.clear;
+    addChunks = mockStoreMethods.addChunks;
+    setMetadata = mockStoreMethods.setMetadata;
+    getMetadata = mockStoreMethods.getMetadata;
+    save = mockStoreMethods.save;
+    load = mockStoreMethods.load;
+    isEmpty = mockStoreMethods.isEmpty;
+    size = mockStoreMethods.size;
+    search = mockStoreMethods.search;
+    getAllChunks = mockStoreMethods.getAllChunks;
+
+    static exists = vi.fn().mockResolvedValue(false);
+  }
+
   return {
-    CodeVectorStore: vi.fn().mockImplementation(() => ({
-      clear: vi.fn(),
-      addChunks: vi.fn(),
-      setMetadata: vi.fn(),
-      getMetadata: vi.fn(),
-      save: vi.fn(),
-      load: vi.fn(),
-      isEmpty: vi.fn(),
-      size: vi.fn(),
-      search: vi.fn(),
-      getAllChunks: vi.fn(),
-    })),
+    CodeVectorStore: MockCodeVectorStore,
   };
 });
 
@@ -133,39 +152,22 @@ function createMockCompletionProvider(): LLMCompletionProvider {
 }
 
 describe("RAGPipeline", () => {
-  let mockStore: ReturnType<
-    typeof vi.mocked<InstanceType<typeof CodeVectorStore>>
-  >;
   let mockEmbeddingProvider: LLMEmbeddingProvider;
   let mockCompletionProvider: LLMCompletionProvider;
 
   beforeEach(() => {
     vi.clearAllMocks();
 
-    // Reset store mock for each test
-    const MockedCodeVectorStore = vi.mocked(CodeVectorStore);
-    MockedCodeVectorStore.mockClear();
+    // Сбрасываем моки на методах mockStoreMethods к дефолтным значениям
+    mockStoreMethods.getMetadata.mockReturnValue(null);
+    mockStoreMethods.save.mockResolvedValue(undefined);
+    mockStoreMethods.load.mockResolvedValue(undefined);
+    mockStoreMethods.isEmpty.mockReturnValue(true);
+    mockStoreMethods.size.mockReturnValue(0);
+    mockStoreMethods.search.mockReturnValue([]);
+    mockStoreMethods.getAllChunks.mockReturnValue([]);
 
-    mockStore = {
-      clear: vi.fn(),
-      addChunks: vi.fn(),
-      setMetadata: vi.fn(),
-      getMetadata: vi.fn().mockReturnValue(null),
-      save: vi.fn().mockResolvedValue(undefined),
-      load: vi.fn().mockResolvedValue(undefined),
-      isEmpty: vi.fn().mockReturnValue(true),
-      size: vi.fn().mockReturnValue(0),
-      search: vi.fn().mockReturnValue([]),
-      getAllChunks: vi.fn().mockReturnValue([]),
-    } as unknown as ReturnType<
-      typeof vi.mocked<InstanceType<typeof CodeVectorStore>>
-    >;
-
-    MockedCodeVectorStore.mockImplementation(
-      () => mockStore as unknown as CodeVectorStore
-    );
-
-    // Setup static method mock
+    // Сбрасываем статический метод exists
     vi.mocked(CodeVectorStore).exists = vi.fn().mockResolvedValue(false);
 
     mockEmbeddingProvider = createMockEmbeddingProvider();
@@ -181,7 +183,8 @@ describe("RAGPipeline", () => {
       const pipeline = new RAGPipeline();
 
       expect(pipeline).toBeDefined();
-      expect(CodeVectorStore).toHaveBeenCalledOnce();
+      // Store создается в конструкторе, проверяем через getChunkCount
+      expect(pipeline.getChunkCount()).toBe(0);
     });
 
     it("should create pipeline with custom config", () => {
@@ -197,7 +200,8 @@ describe("RAGPipeline", () => {
       const pipeline = new RAGPipeline(customConfig);
 
       expect(pipeline).toBeDefined();
-      expect(CodeVectorStore).toHaveBeenCalledOnce();
+      // Store создается в конструкторе, проверяем через getChunkCount
+      expect(pipeline.getChunkCount()).toBe(0);
     });
   });
 
@@ -222,13 +226,13 @@ describe("RAGPipeline", () => {
       expect(findTypeScriptFiles).toHaveBeenCalledWith("/project");
       expect(chunkCodebase).toHaveBeenCalledWith(mockFiles, expect.any(Object));
       expect(mockEmbeddingProvider.embedBatch).toHaveBeenCalled();
-      expect(mockStore.clear).toHaveBeenCalled();
-      expect(mockStore.addChunks).toHaveBeenCalledWith(
+      expect(mockStoreMethods.clear).toHaveBeenCalled();
+      expect(mockStoreMethods.addChunks).toHaveBeenCalledWith(
         mockChunks,
         expect.any(Array)
       );
-      expect(mockStore.setMetadata).toHaveBeenCalled();
-      expect(mockStore.save).toHaveBeenCalled();
+      expect(mockStoreMethods.setMetadata).toHaveBeenCalled();
+      expect(mockStoreMethods.save).toHaveBeenCalled();
 
       expect(metadata.projectPath).toBe("/project");
       expect(metadata.totalChunks).toBe(2);
@@ -264,8 +268,8 @@ describe("RAGPipeline", () => {
       const mockChunks = [createMockChunk()];
 
       vi.mocked(CodeVectorStore).exists = vi.fn().mockResolvedValue(true);
-      mockStore.getMetadata = vi.fn().mockReturnValue(mockMetadata);
-      mockStore.getAllChunks = vi.fn().mockReturnValue(mockChunks);
+      mockStoreMethods.getMetadata.mockReturnValue(mockMetadata);
+      mockStoreMethods.getAllChunks.mockReturnValue(mockChunks);
 
       const pipeline = new RAGPipeline();
       const result = await pipeline.loadIndex("/store");
@@ -273,7 +277,7 @@ describe("RAGPipeline", () => {
       expect(CodeVectorStore.exists).toHaveBeenCalledWith(
         "/store/rag-index.json"
       );
-      expect(mockStore.load).toHaveBeenCalledWith("/store/rag-index.json");
+      expect(mockStoreMethods.load).toHaveBeenCalledWith("/store/rag-index.json");
       expect(result).toEqual(mockMetadata);
     });
 
@@ -284,19 +288,19 @@ describe("RAGPipeline", () => {
       const result = await pipeline.loadIndex("/store");
 
       expect(result).toBeNull();
-      expect(mockStore.load).not.toHaveBeenCalled();
+      expect(mockStoreMethods.load).not.toHaveBeenCalled();
     });
 
     it("should clear store and return null on version mismatch", async () => {
       const outdatedMetadata = createMockMetadata({ version: "0.9.0" });
 
       vi.mocked(CodeVectorStore).exists = vi.fn().mockResolvedValue(true);
-      mockStore.getMetadata = vi.fn().mockReturnValue(outdatedMetadata);
+      mockStoreMethods.getMetadata.mockReturnValue(outdatedMetadata);
 
       const pipeline = new RAGPipeline();
       const result = await pipeline.loadIndex("/store");
 
-      expect(mockStore.clear).toHaveBeenCalled();
+      expect(mockStoreMethods.clear).toHaveBeenCalled();
       expect(result).toBeNull();
     });
   });
@@ -308,8 +312,8 @@ describe("RAGPipeline", () => {
         createMockSearchResult({ finalScore: 0.95, llmScore: 0.9 }),
       ];
 
-      mockStore.isEmpty = vi.fn().mockReturnValue(false);
-      mockStore.search = vi.fn().mockReturnValue(mockSearchResults);
+      mockStoreMethods.isEmpty.mockReturnValue(false);
+      mockStoreMethods.search.mockReturnValue(mockSearchResults);
       vi.mocked(rerankWithLLM).mockResolvedValue(mockRerankedResults);
       vi.mocked(resolveParentChunks).mockReturnValue(mockRerankedResults);
 
@@ -323,7 +327,7 @@ describe("RAGPipeline", () => {
       expect(mockEmbeddingProvider.embed).toHaveBeenCalledWith(
         "What does the test function do?"
       );
-      expect(mockStore.search).toHaveBeenCalled();
+      expect(mockStoreMethods.search).toHaveBeenCalled();
       expect(rerankWithLLM).toHaveBeenCalled();
       expect(resolveParentChunks).toHaveBeenCalled();
       expect(mockCompletionProvider.complete).toHaveBeenCalled();
@@ -336,7 +340,7 @@ describe("RAGPipeline", () => {
     });
 
     it("should throw error when index is empty", async () => {
-      mockStore.isEmpty = vi.fn().mockReturnValue(true);
+      mockStoreMethods.isEmpty.mockReturnValue(true);
 
       const pipeline = new RAGPipeline();
 
@@ -350,8 +354,8 @@ describe("RAGPipeline", () => {
     });
 
     it("should return empty results array when no search results", async () => {
-      mockStore.isEmpty = vi.fn().mockReturnValue(false);
-      mockStore.search = vi.fn().mockReturnValue([]);
+      mockStoreMethods.isEmpty.mockReturnValue(false);
+      mockStoreMethods.search.mockReturnValue([]);
 
       const pipeline = new RAGPipeline();
       const result = await pipeline.query(
@@ -369,8 +373,8 @@ describe("RAGPipeline", () => {
   describe("getStatus", () => {
     it("should return indexed status with metadata when indexed", () => {
       const mockMetadata = createMockMetadata();
-      mockStore.isEmpty = vi.fn().mockReturnValue(false);
-      mockStore.getMetadata = vi.fn().mockReturnValue(mockMetadata);
+      mockStoreMethods.isEmpty.mockReturnValue(false);
+      mockStoreMethods.getMetadata.mockReturnValue(mockMetadata);
 
       const pipeline = new RAGPipeline();
       const status = pipeline.getStatus();
@@ -380,8 +384,8 @@ describe("RAGPipeline", () => {
     });
 
     it("should return not indexed status when store is empty", () => {
-      mockStore.isEmpty = vi.fn().mockReturnValue(true);
-      mockStore.getMetadata = vi.fn().mockReturnValue(null);
+      mockStoreMethods.isEmpty.mockReturnValue(true);
+      mockStoreMethods.getMetadata.mockReturnValue(null);
 
       const pipeline = new RAGPipeline();
       const status = pipeline.getStatus();
@@ -393,13 +397,13 @@ describe("RAGPipeline", () => {
 
   describe("getChunkCount", () => {
     it("should return chunk count from store", () => {
-      mockStore.size = vi.fn().mockReturnValue(42);
+      mockStoreMethods.size.mockReturnValue(42);
 
       const pipeline = new RAGPipeline();
       const count = pipeline.getChunkCount();
 
       expect(count).toBe(42);
-      expect(mockStore.size).toHaveBeenCalled();
+      expect(mockStoreMethods.size).toHaveBeenCalled();
     });
   });
 
@@ -408,7 +412,7 @@ describe("RAGPipeline", () => {
       const pipeline = new RAGPipeline();
       pipeline.clear();
 
-      expect(mockStore.clear).toHaveBeenCalled();
+      expect(mockStoreMethods.clear).toHaveBeenCalled();
     });
   });
 });

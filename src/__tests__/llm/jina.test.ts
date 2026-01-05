@@ -242,7 +242,7 @@ describe("JinaEmbeddingProvider", () => {
       } catch (error) {
         expect(error).toBeInstanceOf(LLMError);
         const llmError = error as LLMError;
-        expect(llmError.subType).toBe(LLMErrorSubType.RATE_LIMITED);
+        expect(llmError.subType).toBe(LLMErrorSubType.RATE_LIMIT);
         expect(llmError.provider).toBe("jina");
       }
     });
