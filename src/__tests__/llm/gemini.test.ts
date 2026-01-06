@@ -155,7 +155,7 @@ describe("GeminiProvider", () => {
       const result = await provider.embed("test text");
 
       expect(result.values).toEqual(expectedValues);
-      expect(result.model).toBe("text-embedding-004");
+      expect(result.model).toBe("gemini-embedding-001");
       expect(result.tokenCount).toBeGreaterThan(0);
     });
 

@@ -2,15 +2,14 @@
  * Telegram bot for code analysis with RAG and multi-LLM support
  */
 
-import { Bot, Context, InputFile } from "grammy";
-import { readFile } from "fs/promises";
-import { executeClaudeAnalysis } from "./claude.js";
+import { Bot, Context } from "grammy";
 import {
-  createSummary,
-  formatDuration,
   logger,
   loadExtendedConfig,
   getConfiguredProviders,
+  getConfigValue,
+  formatForTelegram,
+  splitMessage,
 } from "./utils.js";
 import { validateUserMessage, sanitizeText } from "./validation.js";
 import {
@@ -27,10 +26,8 @@ import {
   getEmbeddingProvider,
   getAvailableProviders,
 } from "./llm/index.js";
-import type { LLMProviderType, ProviderFactoryConfig } from "./llm/types.js";
-import type { ExtendedConfig, UserPreferences } from "./types.js";
-
-const BOT_START_TIME = Math.floor(Date.now() / 1000);
+import type { ProviderFactoryConfig } from "./llm/types.js";
+import type { ExtendedConfig } from "./types.js";
 
 // =============================================================================
 // Security: Error Message Sanitization
@@ -55,60 +52,6 @@ export function sanitizeErrorMessage(message: string): string {
       // Generic Bearer tokens
       .replace(/Bearer\s+[a-zA-Z0-9_-]{20,}/g, "Bearer [REDACTED]")
   );
-}
-
-// =============================================================================
-// User Preferences (in-memory storage)
-// =============================================================================
-
-/** In-memory storage for per-user preferences (exported for testing) */
-export const userPreferences = new Map<number, UserPreferences>();
-
-/** Clear user preferences (for testing) */
-export function clearUserPreferences(): void {
-  userPreferences.clear();
-}
-
-/**
- * Gets user preferences, creating defaults if not exists
- * @param userId - Telegram user ID
- * @param defaultProvider - Default LLM provider from config
- * @returns User preferences object
- */
-export function getUserPreferences(
-  userId: number,
-  defaultProvider: ExtendedConfig["defaultLLMProvider"]
-): UserPreferences {
-  const existing = userPreferences.get(userId);
-  if (existing) return existing;
-
-  const defaults: UserPreferences = {
-    userId,
-    preferredProvider: defaultProvider,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
-  userPreferences.set(userId, defaults);
-  return defaults;
-}
-
-/**
- * Sets user's preferred LLM provider
- * @param userId - Telegram user ID
- * @param provider - LLM provider type
- * @param defaultProvider - Default provider for fallback
- */
-export function setUserProvider(
-  userId: number,
-  provider: ExtendedConfig["defaultLLMProvider"],
-  defaultProvider: ExtendedConfig["defaultLLMProvider"]
-): void {
-  const prefs = getUserPreferences(userId, defaultProvider);
-  userPreferences.set(userId, {
-    ...prefs,
-    preferredProvider: provider,
-    updatedAt: new Date(),
-  });
 }
 
 // =============================================================================
@@ -196,7 +139,7 @@ export async function startSimpleAnimation(ctx: Context) {
  */
 export function createBot(): Bot {
   const config = loadExtendedConfig();
-  const authService = createAuthService(config.authorizedUsers);
+  const authService = createAuthService(config.authorizedUsers, config.adminUsers);
 
   const bot = new Bot(config.telegramToken);
 
@@ -241,9 +184,10 @@ export function createBot(): Bot {
 
   // /start command
   bot.command("start", async (ctx) => {
+    const maxLength = getConfigValue("USERNAME_DISPLAY_LENGTH");
     const username = sanitizeText(ctx.from?.first_name || "user").substring(
       0,
-      50
+      maxLength
     );
     await ctx.reply(
       `👋 Hello, ${username}!\n\n` +
@@ -256,85 +200,30 @@ export function createBot(): Bot {
   bot.command("help", async (ctx) => {
     const availableProviders = getConfiguredProviders(config.llmApiKeys);
     await ctx.reply(
-      "📖 **Usage Guide**\n\n" +
-        "**Commands:**\n" +
-        "/provider [name] - Show/set LLM provider\n" +
+      "📖 <b>Usage Guide</b>\n\n" +
+        "<b>Commands:</b>\n" +
         "/index - Index codebase for RAG\n" +
-        "/ask <question> - Query codebase via RAG\n" +
+        "/ask &lt;question&gt; - Query codebase via RAG\n" +
         "/status - Show system status\n\n" +
-        "**Text Analysis:**\n" +
+        "<b>Text Analysis:</b>\n" +
         '🔍 Example: "Explain project architecture"\n' +
         "⚡ Send text message for Claude CLI analysis.\n\n" +
-        `Available providers: ${availableProviders.join(", ") || "none"}`
+        `Available providers: ${availableProviders.join(", ") || "none"}`,
+      { parse_mode: "HTML" }
     );
   });
 
   // ==========================================================================
-  // /provider command - Show or set LLM provider
-  // ==========================================================================
-  bot.command("provider", async (ctx) => {
-    const userId = ctx.from?.id;
-    if (!userId) return;
-
-    const args = ctx.match?.toString().trim();
-    const factoryConfig = toProviderFactoryConfig(config.llmApiKeys);
-    const availableProviders = getAvailableProviders(factoryConfig);
-
-    if (!args) {
-      // Show current provider
-      const prefs = getUserPreferences(userId, config.defaultLLMProvider);
-      await ctx.reply(
-        `🤖 **Current provider:** ${prefs.preferredProvider}\n\n` +
-          `**Available:** ${availableProviders.join(", ") || "none"}\n\n` +
-          `Usage: /provider <name>`
-      );
-      return;
-    }
-
-    // Validate provider name
-    const provider = args.toLowerCase();
-    const validProviders = ["openai", "gemini", "anthropic", "perplexity"];
-
-    // Explicitly reject claude-code as user-selectable provider
-    if (provider === "claude-code") {
-      await ctx.reply(
-        "❌ claude-code is used internally for CLI analysis and cannot be selected."
-      );
-      return;
-    }
-
-    if (!validProviders.includes(provider)) {
-      await ctx.reply(
-        `❌ Unknown provider "${args}". Valid: ${validProviders.join(", ")}`
-      );
-      return;
-    }
-
-    // Check if provider is available (has API key)
-    const typedProvider = provider as LLMProviderType;
-    if (!availableProviders.includes(typedProvider)) {
-      await ctx.reply(
-        `❌ Provider "${provider}" not configured. Available: ${availableProviders.join(", ") || "none"}`
-      );
-      return;
-    }
-
-    // Set provider (exclude claude-code from user selection)
-    if (
-      provider === "openai" ||
-      provider === "gemini" ||
-      provider === "anthropic" ||
-      provider === "perplexity"
-    ) {
-      setUserProvider(userId, provider, config.defaultLLMProvider);
-      await ctx.reply(`✅ Provider set to **${provider}**`);
-    }
-  });
-
-  // ==========================================================================
-  // /index command - Index codebase for RAG
+  // /index command - Index codebase for RAG (admin only)
   // ==========================================================================
   bot.command("index", async (ctx) => {
+    // Admin-only command
+    const userId = ctx.from?.id;
+    if (!userId || !authService.isAdmin(userId)) {
+      await ctx.reply("🚫 Only admins can run indexing.");
+      return;
+    }
+
     // Prevent concurrent indexing operations
     if (indexingInProgress) {
       await ctx.reply("⏳ Indexing already in progress. Please wait.");
@@ -362,7 +251,10 @@ export function createBot(): Bot {
 
     try {
       const pipeline = await ensureRagPipeline(config);
-      const embeddingProvider = getEmbeddingProvider(factoryConfig);
+      const embeddingProvider = getEmbeddingProvider(
+        factoryConfig,
+        config.defaultEmbeddingProvider
+      );
 
       const metadata = await pipeline.index(
         config.projectPath,
@@ -371,10 +263,11 @@ export function createBot(): Bot {
       );
 
       await ctx.reply(
-        `✅ **Indexing complete!**\n\n` +
+        `✅ <b>Indexing complete!</b>\n\n` +
           `📊 ${metadata.totalChunks} chunks\n` +
           `📝 ${metadata.totalTokens} tokens\n` +
-          `📁 Project: ${metadata.projectPath}`
+          `📁 Project: ${metadata.projectPath}`,
+        { parse_mode: "HTML" }
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
@@ -430,25 +323,26 @@ export function createBot(): Bot {
       return;
     }
 
-    const prefs = getUserPreferences(userId, config.defaultLLMProvider);
     const animationId = await startSimpleAnimation(ctx);
 
     try {
-      const embeddingProvider = getEmbeddingProvider(factoryConfig);
+      const embeddingProvider = getEmbeddingProvider(
+        factoryConfig,
+        config.defaultEmbeddingProvider
+      );
 
-      // Get API key for user's preferred provider
-      const providerApiKey = config.llmApiKeys[prefs.preferredProvider];
+      // Get API key for configured default provider
+      const providerApiKey = config.llmApiKeys[config.defaultLLMProvider];
       if (!providerApiKey) {
         await ctx.api.deleteMessage(ctx.chat.id, animationId).catch(() => {});
         await ctx.reply(
-          `❌ API key not configured for ${prefs.preferredProvider}. ` +
-            `Use /provider to select another provider.`
+          `❌ API key not configured for ${config.defaultLLMProvider}.`
         );
         return;
       }
 
       const completionProvider = createCompletionProvider(
-        prefs.preferredProvider,
+        config.defaultLLMProvider,
         providerApiKey
       );
 
@@ -460,15 +354,27 @@ export function createBot(): Bot {
 
       await ctx.api.deleteMessage(ctx.chat.id, animationId).catch(() => {});
 
-      // Format sources (top 3)
+      // Format sources
+      const maxSources = getConfigValue("RAG_MAX_SOURCES_DISPLAY");
       const sources = result.sources
-        .slice(0, 3)
+        .slice(0, maxSources)
         .map((s, i) => `[${i + 1}] ${s.chunk.filePath}:${s.chunk.startLine}`)
         .join("\n");
 
-      const sourcesSection = sources ? `\n\n📚 **Sources:**\n${sources}` : "";
+      // Convert LLM response to Telegram HTML format
+      const formattedAnswer = formatForTelegram(result.answer);
+      const fullMessage = `🔍 <b>Answer:</b>\n\n${formattedAnswer}`;
 
-      await ctx.reply(`🔍 **Answer:**\n\n${result.answer}${sourcesSection}`);
+      // Split long messages and send
+      const messageParts = splitMessage(fullMessage);
+      for (const part of messageParts) {
+        await ctx.reply(part, { parse_mode: "HTML" });
+      }
+
+      // Send sources separately if present
+      if (sources) {
+        await ctx.reply(`📚 <b>Sources:</b>\n${sources}`, { parse_mode: "HTML" });
+      }
     } catch (error) {
       await ctx.api.deleteMessage(ctx.chat.id, animationId).catch(() => {});
       const message = error instanceof Error ? error.message : "Unknown error";
@@ -481,94 +387,38 @@ export function createBot(): Bot {
   // /status command - Show system status
   // ==========================================================================
   bot.command("status", async (ctx) => {
-    const userId = ctx.from?.id;
-    if (!userId) return;
-
-    const prefs = getUserPreferences(userId, config.defaultLLMProvider);
     const factoryConfig = toProviderFactoryConfig(config.llmApiKeys);
     const availableProviders = getAvailableProviders(factoryConfig);
 
     let ragStatus = "Not initialized";
+    let lastIndexed = "";
     if (ragPipeline) {
       const status = ragPipeline.getStatus();
       if (status.indexed && status.metadata) {
         ragStatus = `✅ Indexed (${status.metadata.totalChunks} chunks)`;
+        const indexedDate = new Date(status.metadata.indexedAt);
+        lastIndexed = `\n📅 Last indexed: ${indexedDate.toLocaleString("ru-RU")}`;
       } else {
         ragStatus = "❌ Not indexed";
       }
     }
 
     await ctx.reply(
-      `📊 **System Status**\n\n` +
-        `🤖 Your provider: ${prefs.preferredProvider}\n` +
-        `📚 RAG Index: ${ragStatus}\n` +
+      `📊 <b>System Status</b>\n\n` +
+        `🤖 LLM provider: ${config.defaultLLMProvider}\n` +
+        `📚 RAG Index: ${ragStatus}${lastIndexed}\n` +
         `🔧 Available providers: ${availableProviders.join(", ") || "none"}\n` +
-        `📁 Project: ${config.projectPath}`
+        `📁 Project: ${config.projectPath}`,
+      { parse_mode: "HTML" }
     );
   });
 
-  // Text message handler
+  // Handler for text messages without commands - redirect to /ask
   bot.on("message:text", async (ctx) => {
-    const username = sanitizeText(ctx.from?.first_name || "user").substring(
-      0,
-      50
+    await ctx.reply(
+      "💡 Use /ask command for code questions.\n\n" +
+        "Example: `/ask How does authentication work?`"
     );
-
-    if (ctx.message.date < BOT_START_TIME) {
-      return;
-    }
-
-    const messageValidation = validateUserMessage(ctx.message.text);
-    if (!messageValidation.success || !messageValidation.data) {
-      await ctx.reply(`❌ ${messageValidation.error ?? "Validation failed"}`);
-      return;
-    }
-
-    const question = sanitizeText(messageValidation.data);
-    logger.info(`Request from ${username}: "${question.substring(0, 100)}..."`);
-
-    let animationMessageId: number | null = null;
-
-    try {
-      animationMessageId = await startSimpleAnimation(ctx);
-
-      const startTime = Date.now();
-      const analysisResult = await executeClaudeAnalysis(question);
-      const duration = Date.now() - startTime;
-
-      try {
-        await ctx.api.deleteMessage(ctx.chat.id, animationMessageId);
-      } catch (error) {
-        logger.debug("Failed to delete animation message:", error);
-      }
-
-      const summary = createSummary(analysisResult.summary);
-      await ctx.reply(
-        `✅ **Analysis completed**\n\n${summary}\n\n` +
-          `📄 Detailed file attached.\n⏱️ Time: ${formatDuration(duration)}`
-      );
-
-      try {
-        const fileContent = await readFile(analysisResult.filePath);
-        await ctx.replyWithDocument(
-          new InputFile(fileContent, analysisResult.fileName)
-        );
-      } catch (error) {
-        logger.debug("Failed to send document:", error);
-        await ctx.reply("⚠️ Analysis completed, but file attachment failed.");
-      }
-    } catch (error) {
-      if (animationMessageId) {
-        try {
-          await ctx.api.deleteMessage(ctx.chat.id, animationMessageId);
-        } catch (deleteError) {
-          logger.debug("Failed to delete animation message:", deleteError);
-        }
-      }
-
-      logger.error("Analysis error:", error);
-      await ctx.reply("❌ Analysis failed. Try rephrasing your question.");
-    }
   });
 
   // Handler for non-text messages

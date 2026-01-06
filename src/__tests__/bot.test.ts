@@ -12,9 +12,9 @@ import type { Message, Chat, User } from "grammy/types";
 
 // Store captured handlers for testing actual command execution
 // Using vi.hoisted() to make variable available in mock factories (hoisted)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// Handler type is defined as unknown function, with proper typing at retrieval via getContextHandler/getErrorHandler
 const capturedHandlers = vi.hoisted(
-  () => ({} as Record<string, (...args: any[]) => Promise<void>>)
+  () => ({} as Record<string, (...args: unknown[]) => Promise<void>>)
 );
 
 // Configurable mock state for RAGPipeline
@@ -44,33 +44,24 @@ const ragMockState = vi.hoisted(() => ({
 }));
 
 vi.mock("grammy", () => {
+  // Handler type for bot methods - uses unknown[] for type safety
+  type MockHandler = (...args: unknown[]) => Promise<void>;
+
   // Mock class for grammy Bot - must be a real class for 'new' to work
   // Defined inside factory to avoid hoisting issues
   const MockBot = class {
-    catch = vi.fn(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (handler: (...args: any[]) => Promise<void>) => {
-        capturedHandlers.error = handler;
-      }
-    );
-    use = vi.fn(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (handler: (...args: any[]) => Promise<void>) => {
-        capturedHandlers.middleware = handler;
-      }
-    );
-    command = vi.fn(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (name: string, handler: (...args: any[]) => Promise<void>) => {
-        capturedHandlers[`cmd:${name}`] = handler;
-      }
-    );
-    on = vi.fn(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (event: string, handler: (...args: any[]) => Promise<void>) => {
-        capturedHandlers[`on:${event}`] = handler;
-      }
-    );
+    catch = vi.fn((handler: MockHandler) => {
+      capturedHandlers.error = handler;
+    });
+    use = vi.fn((handler: MockHandler) => {
+      capturedHandlers.middleware = handler;
+    });
+    command = vi.fn((name: string, handler: MockHandler) => {
+      capturedHandlers[`cmd:${name}`] = handler;
+    });
+    on = vi.fn((event: string, handler: MockHandler) => {
+      capturedHandlers[`on:${event}`] = handler;
+    });
   };
 
   return {
@@ -100,6 +91,7 @@ vi.mock("../utils.js", () => ({
       gemini: "gemini-test-key",
     },
     defaultLLMProvider: "openai",
+    defaultEmbeddingProvider: "openai",
     ragStorePath: "./rag-index",
     ragConfig: {
       chunkSize: 300,
@@ -121,11 +113,21 @@ vi.mock("../utils.js", () => ({
     error: vi.fn(),
   },
   getConfiguredProviders: vi.fn(() => ["openai", "gemini"]),
+  getConfigValue: vi.fn((key: string) => {
+    const defaults: Record<string, number | string> = {
+      USERNAME_DISPLAY_LENGTH: 50,
+      RAG_MAX_SOURCES_DISPLAY: 3,
+    };
+    return defaults[key];
+  }),
+  formatForTelegram: vi.fn((text: string) => text),
+  splitMessage: vi.fn((text: string) => [text]),
 }));
 
 vi.mock("../auth.js", () => ({
   createAuthService: vi.fn(() => ({
     isAuthorized: vi.fn((userId: number) => userId === 123456789),
+    isAdmin: vi.fn((userId: number) => userId === 123456789),
   })),
   authMiddleware: vi.fn(
     () => async (_ctx: unknown, next: () => Promise<void>) => {
@@ -236,12 +238,8 @@ import {
   resetIndexingState,
   resetRagPipeline,
   setIndexingInProgress,
-  clearUserPreferences,
-  getUserPreferences,
-  setUserProvider,
   ensureRagPipeline,
   toProviderFactoryConfig,
-  userPreferences,
 } from "../bot.js";
 import type { LLMApiKeys } from "../types.js";
 
@@ -312,12 +310,17 @@ function createMockContext(overrides: MockContextOverrides = {}): MockContext {
 }
 
 /**
+ * BotError-like object for error handler testing
+ */
+interface MockBotError {
+  error: Error;
+  ctx: MockContext;
+}
+
+/**
  * Creates a BotError-like object for error handler testing
  */
-function createBotError(
-  error: Error,
-  ctx: MockContext
-): { error: Error; ctx: MockContext } {
+function createBotError(error: Error, ctx: MockContext): MockBotError {
   return { error, ctx };
 }
 
@@ -331,16 +334,39 @@ function clearCapturedHandlers(): void {
 }
 
 /**
- * Gets a handler from capturedHandlers with type safety
+ * Handler type for context-based handlers (commands, events, middleware)
+ */
+type ContextHandler = (ctx: MockContext) => Promise<void>;
+
+/**
+ * Handler type for error handlers (bot.catch)
+ */
+type ErrorHandler = (err: MockBotError) => Promise<void>;
+
+/**
+ * Gets a context handler from capturedHandlers with type safety
+ * Use for: cmd:*, on:*, middleware
  * Throws if handler is not registered
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function getHandler(key: string): (...args: any[]) => Promise<void> {
+function getContextHandler(key: string): ContextHandler {
   const handler = capturedHandlers[key];
   if (!handler) {
     throw new Error(`Handler "${key}" not registered. Call createBot() first.`);
   }
-  return handler;
+  return handler as ContextHandler;
+}
+
+/**
+ * Gets an error handler from capturedHandlers with type safety
+ * Use for: error
+ * Throws if handler is not registered
+ */
+function getErrorHandler(): ErrorHandler {
+  const handler = capturedHandlers.error;
+  if (!handler) {
+    throw new Error('Error handler not registered. Call createBot() first.');
+  }
+  return handler as ErrorHandler;
 }
 
 // =============================================================================
@@ -391,7 +417,6 @@ describe("bot.ts", () => {
     clearCapturedHandlers();
     resetIndexingState();
     resetRagPipeline();
-    clearUserPreferences();
   });
 
   afterEach(() => {
@@ -399,7 +424,6 @@ describe("bot.ts", () => {
     clearCapturedHandlers();
     resetIndexingState();
     resetRagPipeline();
-    clearUserPreferences();
   });
 
   // ===========================================================================
@@ -415,7 +439,6 @@ describe("bot.ts", () => {
       expect(capturedHandlers.middleware).toBeDefined();
       expect(capturedHandlers["cmd:start"]).toBeDefined();
       expect(capturedHandlers["cmd:help"]).toBeDefined();
-      expect(capturedHandlers["cmd:provider"]).toBeDefined();
       expect(capturedHandlers["cmd:index"]).toBeDefined();
       expect(capturedHandlers["cmd:ask"]).toBeDefined();
       expect(capturedHandlers["cmd:status"]).toBeDefined();
@@ -441,7 +464,7 @@ describe("bot.ts", () => {
         "openai"
       );
 
-      await getHandler("error")(createBotError(error, ctx));
+      await getErrorHandler()(createBotError(error, ctx));
 
       expect(ctx.reply).toHaveBeenCalledWith(
         "openai rate limit exceeded. Please wait a moment."
@@ -455,7 +478,7 @@ describe("bot.ts", () => {
         RAGErrorSubType.INDEX_NOT_FOUND
       );
 
-      await getHandler("error")(createBotError(error, ctx));
+      await getErrorHandler()(createBotError(error, ctx));
 
       expect(ctx.reply).toHaveBeenCalledWith(
         "Code index not found. Use /index to create one."
@@ -469,7 +492,7 @@ describe("bot.ts", () => {
         ClaudeErrorSubType.TIMEOUT
       );
 
-      await getHandler("error")(createBotError(error, ctx));
+      await getErrorHandler()(createBotError(error, ctx));
 
       expect(ctx.reply).toHaveBeenCalledWith(
         expect.stringContaining("timed out")
@@ -483,7 +506,7 @@ describe("bot.ts", () => {
         ClaudeErrorSubType.EXECUTION
       );
 
-      await getHandler("error")(createBotError(error, ctx));
+      await getErrorHandler()(createBotError(error, ctx));
 
       expect(ctx.reply).toHaveBeenCalledWith(
         expect.stringContaining("Analysis error")
@@ -498,7 +521,7 @@ describe("bot.ts", () => {
         "Message too short"
       );
 
-      await getHandler("error")(createBotError(error, ctx));
+      await getErrorHandler()(createBotError(error, ctx));
 
       expect(ctx.reply).toHaveBeenCalledWith(
         expect.stringContaining("Invalid input")
@@ -509,7 +532,7 @@ describe("bot.ts", () => {
       const ctx = createMockContext();
       const error = new Error("Something unexpected happened");
 
-      await getHandler("error")(createBotError(error, ctx));
+      await getErrorHandler()(createBotError(error, ctx));
 
       expect(ctx.reply).toHaveBeenCalledWith(
         expect.stringContaining("Error occurred")
@@ -527,7 +550,7 @@ describe("bot.ts", () => {
 
       // Should not throw even when reply fails
       await expect(
-        getHandler("error")(createBotError(error, ctx))
+        getErrorHandler()(createBotError(error, ctx))
       ).resolves.not.toThrow();
     });
   });
@@ -545,7 +568,7 @@ describe("bot.ts", () => {
       const ctx = createMockContext({ from: { first_name: "TestUser" } });
       vi.mocked(sanitizeText).mockReturnValueOnce("TestUser");
 
-      await getHandler("cmd:start")(ctx);
+      await getContextHandler("cmd:start")(ctx);
 
       expect(ctx.reply).toHaveBeenCalledWith(
         expect.stringContaining("Hello, TestUser")
@@ -561,7 +584,7 @@ describe("bot.ts", () => {
       });
       vi.mocked(sanitizeText).mockReturnValueOnce("User");
 
-      await getHandler("cmd:start")(ctx);
+      await getContextHandler("cmd:start")(ctx);
 
       expect(sanitizeText).toHaveBeenCalledWith("  User  ");
       expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining("User"));
@@ -573,7 +596,7 @@ describe("bot.ts", () => {
       });
       vi.mocked(sanitizeText).mockReturnValueOnce("user");
 
-      await getHandler("cmd:start")(ctx);
+      await getContextHandler("cmd:start")(ctx);
 
       expect(ctx.reply).toHaveBeenCalledWith(
         expect.stringContaining("Hello, user")
@@ -593,100 +616,35 @@ describe("bot.ts", () => {
     it("should list all commands", async () => {
       const ctx = createMockContext();
 
-      await getHandler("cmd:help")(ctx);
+      await getContextHandler("cmd:help")(ctx);
 
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining("/provider")
+        expect.stringContaining("/index"),
+        expect.objectContaining({ parse_mode: "HTML" })
       );
-      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining("/index"));
-      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining("/ask"));
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining("/status")
+        expect.stringContaining("/ask"),
+        expect.objectContaining({ parse_mode: "HTML" })
+      );
+      expect(ctx.reply).toHaveBeenCalledWith(
+        expect.stringContaining("/status"),
+        expect.objectContaining({ parse_mode: "HTML" })
       );
     });
 
     it("should show available providers", async () => {
       const ctx = createMockContext();
 
-      await getHandler("cmd:help")(ctx);
+      await getContextHandler("cmd:help")(ctx);
 
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining("Available providers")
+        expect.stringContaining("Available providers"),
+        expect.objectContaining({ parse_mode: "HTML" })
       );
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining("openai")
+        expect.stringContaining("openai"),
+        expect.objectContaining({ parse_mode: "HTML" })
       );
-    });
-  });
-
-  // ===========================================================================
-  // /provider Command Tests
-  // ===========================================================================
-
-  describe("/provider command", () => {
-    beforeEach(() => {
-      createBot();
-    });
-
-    it("should show current provider without args", async () => {
-      const ctx = createMockContext({ match: "" });
-
-      await getHandler("cmd:provider")(ctx);
-
-      expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining("Current provider")
-      );
-    });
-
-    it("should set valid provider", async () => {
-      const ctx = createMockContext({ match: "gemini" });
-      vi.mocked(getAvailableProviders).mockReturnValue(["openai", "gemini"]);
-
-      await getHandler("cmd:provider")(ctx);
-
-      expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining("Provider set to")
-      );
-      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining("gemini"));
-    });
-
-    it("should reject invalid provider", async () => {
-      const ctx = createMockContext({ match: "invalid-provider" });
-
-      await getHandler("cmd:provider")(ctx);
-
-      expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining("Unknown provider")
-      );
-    });
-
-    it("should reject claude-code", async () => {
-      const ctx = createMockContext({ match: "claude-code" });
-
-      await getHandler("cmd:provider")(ctx);
-
-      expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining("cannot be selected")
-      );
-    });
-
-    it("should reject unavailable provider", async () => {
-      const ctx = createMockContext({ match: "anthropic" });
-      vi.mocked(getAvailableProviders).mockReturnValue(["openai", "gemini"]);
-
-      await getHandler("cmd:provider")(ctx);
-
-      expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining("not configured")
-      );
-    });
-
-    it("should return early when no user ID", async () => {
-      const ctx = createMockContext({ from: null });
-
-      await getHandler("cmd:provider")(ctx);
-
-      expect(ctx.reply).not.toHaveBeenCalled();
     });
   });
 
@@ -703,7 +661,7 @@ describe("bot.ts", () => {
       setIndexingInProgress(true);
       const ctx = createMockContext();
 
-      await getHandler("cmd:index")(ctx);
+      await getContextHandler("cmd:index")(ctx);
 
       expect(ctx.reply).toHaveBeenCalledWith(
         expect.stringContaining("already in progress")
@@ -717,7 +675,7 @@ describe("bot.ts", () => {
         "perplexity",
       ]);
 
-      await getHandler("cmd:index")(ctx);
+      await getContextHandler("cmd:index")(ctx);
 
       expect(ctx.reply).toHaveBeenCalledWith(
         expect.stringContaining("requires an embedding provider")
@@ -728,13 +686,14 @@ describe("bot.ts", () => {
       const ctx = createMockContext();
       vi.mocked(getAvailableProviders).mockReturnValue(["openai", "gemini"]);
 
-      await getHandler("cmd:index")(ctx);
+      await getContextHandler("cmd:index")(ctx);
 
       expect(ctx.reply).toHaveBeenCalledWith(
         expect.stringContaining("Starting codebase indexing")
       );
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining("Indexing complete")
+        expect.stringContaining("Indexing complete"),
+        expect.objectContaining({ parse_mode: "HTML" })
       );
     });
 
@@ -745,7 +704,7 @@ describe("bot.ts", () => {
         throw new Error("Embedding provider error");
       });
 
-      await getHandler("cmd:index")(ctx);
+      await getContextHandler("cmd:index")(ctx);
 
       expect(ctx.reply).toHaveBeenCalledWith(
         expect.stringContaining("Indexing failed")
@@ -759,7 +718,7 @@ describe("bot.ts", () => {
         throw new Error("Error");
       });
 
-      await getHandler("cmd:index")(ctx);
+      await getContextHandler("cmd:index")(ctx);
 
       // indexingInProgress should be reset to false
       const ctx2 = createMockContext();
@@ -769,7 +728,7 @@ describe("bot.ts", () => {
         embedBatch: vi.fn(),
       });
 
-      await getHandler("cmd:index")(ctx2);
+      await getContextHandler("cmd:index")(ctx2);
 
       // Should not say "already in progress"
       expect(ctx2.reply).not.toHaveBeenCalledWith(
@@ -790,7 +749,7 @@ describe("bot.ts", () => {
     it("should reject empty question", async () => {
       const ctx = createMockContext({ match: "" });
 
-      await getHandler("cmd:ask")(ctx);
+      await getContextHandler("cmd:ask")(ctx);
 
       expect(ctx.reply).toHaveBeenCalledWith(
         expect.stringContaining("Usage: /ask")
@@ -804,7 +763,7 @@ describe("bot.ts", () => {
         error: "Message too short",
       });
 
-      await getHandler("cmd:ask")(ctx);
+      await getContextHandler("cmd:ask")(ctx);
 
       expect(ctx.reply).toHaveBeenCalledWith(
         expect.stringContaining("Message too short")
@@ -822,7 +781,7 @@ describe("bot.ts", () => {
         "perplexity",
       ]);
 
-      await getHandler("cmd:ask")(ctx);
+      await getContextHandler("cmd:ask")(ctx);
 
       expect(ctx.reply).toHaveBeenCalledWith(
         expect.stringContaining("require an embedding provider")
@@ -840,7 +799,7 @@ describe("bot.ts", () => {
       // Configure RAG mock to return not indexed
       ragMockState.indexed = false;
 
-      await getHandler("cmd:ask")(ctx);
+      await getContextHandler("cmd:ask")(ctx);
 
       expect(ctx.reply).toHaveBeenCalledWith(
         expect.stringContaining("Use /index first")
@@ -858,10 +817,11 @@ describe("bot.ts", () => {
       // Configure RAG mock (indexed: true is default, queryResult set in beforeEach)
       ragMockState.indexed = true;
 
-      await getHandler("cmd:ask")(ctx);
+      await getContextHandler("cmd:ask")(ctx);
 
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining("Test answer from RAG")
+        expect.stringContaining("Test answer from RAG"),
+        expect.objectContaining({ parse_mode: "HTML" })
       );
       expect(ctx.api.deleteMessage).toHaveBeenCalled();
     });
@@ -870,7 +830,7 @@ describe("bot.ts", () => {
       const ctx = createMockContext({ from: null, match: "test query" });
       // Note: No mock setup for validateUserMessage - early return before validation
 
-      await getHandler("cmd:ask")(ctx);
+      await getContextHandler("cmd:ask")(ctx);
 
       // Reply should not be called with Answer (early return)
       expect(ctx.reply).not.toHaveBeenCalledWith(
@@ -892,35 +852,31 @@ describe("bot.ts", () => {
       const ctx = createMockContext();
       vi.mocked(getAvailableProviders).mockReturnValue(["openai", "gemini"]);
 
-      await getHandler("cmd:status")(ctx);
+      await getContextHandler("cmd:status")(ctx);
 
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining("System Status")
+        expect.stringContaining("System Status"),
+        expect.objectContaining({ parse_mode: "HTML" })
       );
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining("Your provider")
+        expect.stringContaining("LLM provider"),
+        expect.objectContaining({ parse_mode: "HTML" })
       );
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining("RAG Index")
+        expect.stringContaining("RAG Index"),
+        expect.objectContaining({ parse_mode: "HTML" })
       );
-    });
-
-    it("should return early when no user ID", async () => {
-      const ctx = createMockContext({ from: null });
-
-      await getHandler("cmd:status")(ctx);
-
-      expect(ctx.reply).not.toHaveBeenCalled();
     });
 
     it("should show 'Not initialized' when RAG pipeline is null", async () => {
       const ctx = createMockContext();
       resetRagPipeline();
 
-      await getHandler("cmd:status")(ctx);
+      await getContextHandler("cmd:status")(ctx);
 
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining("Not initialized")
+        expect.stringContaining("Not initialized"),
+        expect.objectContaining({ parse_mode: "HTML" })
       );
     });
   });
@@ -934,107 +890,18 @@ describe("bot.ts", () => {
       createBot();
     });
 
-    it("should ignore old messages", async () => {
-      const oldTimestamp = Math.floor(Date.now() / 1000) - 120;
+    it("should redirect to /ask command", async () => {
       const ctx = createMockContext({
-        message: { text: "Old message", date: oldTimestamp },
+        message: { text: "How does this work?", date: Math.floor(Date.now() / 1000) + 10 },
       });
 
-      await getHandler("on:message:text")(ctx);
+      await getContextHandler("on:message:text")(ctx);
 
-      // Should return early without processing
+      expect(ctx.reply).toHaveBeenCalledWith(
+        expect.stringContaining("Use /ask command")
+      );
+      // Should not call Claude CLI directly
       expect(executeClaudeAnalysis).not.toHaveBeenCalled();
-    });
-
-    it("should validate message", async () => {
-      const ctx = createMockContext({
-        message: {
-          text: "hi",
-          date: Math.floor(Date.now() / 1000) + 10,
-        },
-      });
-      vi.mocked(validateUserMessage).mockReturnValueOnce({
-        success: false,
-        error: "Message too short",
-      });
-
-      await getHandler("on:message:text")(ctx);
-
-      expect(validateUserMessage).toHaveBeenCalledWith("hi");
-      expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining("Message too short")
-      );
-    });
-
-    it("should process valid message", async () => {
-      const ctx = createMockContext({
-        message: {
-          text: "Explain the project architecture",
-          date: Math.floor(Date.now() / 1000) + 10,
-        },
-      });
-      vi.mocked(validateUserMessage).mockReturnValueOnce({
-        success: true,
-        data: "Explain the project architecture",
-      });
-      vi.mocked(executeClaudeAnalysis).mockResolvedValueOnce({
-        summary: "Project uses clean architecture with...",
-        filePath: "/tmp/analysis.md",
-        fileName: "analysis.md",
-        fileSize: 1024,
-      });
-
-      await getHandler("on:message:text")(ctx);
-
-      expect(executeClaudeAnalysis).toHaveBeenCalledWith(
-        "Explain the project architecture"
-      );
-      expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining("Analysis completed")
-      );
-      expect(ctx.replyWithDocument).toHaveBeenCalled();
-    });
-
-    it("should handle analysis error", async () => {
-      const ctx = createMockContext({
-        message: {
-          text: "Analyze this code",
-          date: Math.floor(Date.now() / 1000) + 10,
-        },
-      });
-      vi.mocked(validateUserMessage).mockReturnValueOnce({
-        success: true,
-        data: "Analyze this code",
-      });
-      vi.mocked(executeClaudeAnalysis).mockRejectedValueOnce(
-        new Error("Analysis failed")
-      );
-
-      await getHandler("on:message:text")(ctx);
-
-      expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining("Analysis failed")
-      );
-    });
-
-    it("should delete animation message on error", async () => {
-      const ctx = createMockContext({
-        message: {
-          text: "Analyze this code",
-          date: Math.floor(Date.now() / 1000) + 10,
-        },
-      });
-      vi.mocked(validateUserMessage).mockReturnValueOnce({
-        success: true,
-        data: "Analyze this code",
-      });
-      vi.mocked(executeClaudeAnalysis).mockRejectedValueOnce(
-        new Error("Analysis failed")
-      );
-
-      await getHandler("on:message:text")(ctx);
-
-      expect(ctx.api.deleteMessage).toHaveBeenCalled();
     });
   });
 
@@ -1050,7 +917,7 @@ describe("bot.ts", () => {
     it("should reply 'only text supported'", async () => {
       const ctx = createMockContext();
 
-      await getHandler("on:message")(ctx);
+      await getContextHandler("on:message")(ctx);
 
       expect(ctx.reply).toHaveBeenCalledWith(
         expect.stringContaining("Only text messages supported")
@@ -1126,92 +993,13 @@ describe("bot.ts", () => {
   // Helper Functions Tests
   // ===========================================================================
 
-  describe("getUserPreferences()", () => {
-    it("should return default preferences for new user", () => {
-      const prefs = getUserPreferences(999, "openai");
-
-      expect(prefs.userId).toBe(999);
-      expect(prefs.preferredProvider).toBe("openai");
-    });
-
-    it("should return existing preferences", () => {
-      setUserProvider(999, "gemini", "openai");
-      const prefs = getUserPreferences(999, "openai");
-
-      expect(prefs.preferredProvider).toBe("gemini");
-    });
-
-    it("should set correct default provider", () => {
-      const prefs1 = getUserPreferences(111, "gemini");
-      expect(prefs1.preferredProvider).toBe("gemini");
-
-      const prefs2 = getUserPreferences(222, "anthropic");
-      expect(prefs2.preferredProvider).toBe("anthropic");
-
-      const prefs3 = getUserPreferences(333, "perplexity");
-      expect(prefs3.preferredProvider).toBe("perplexity");
-    });
-
-    it("should set createdAt and updatedAt dates", () => {
-      const beforeTime = new Date();
-      const prefs = getUserPreferences(444, "openai");
-      const afterTime = new Date();
-
-      expect(prefs.createdAt).toBeInstanceOf(Date);
-      expect(prefs.updatedAt).toBeInstanceOf(Date);
-      expect(prefs.createdAt.getTime()).toBeGreaterThanOrEqual(
-        beforeTime.getTime()
-      );
-      expect(prefs.createdAt.getTime()).toBeLessThanOrEqual(afterTime.getTime());
-    });
-  });
-
-  describe("setUserProvider()", () => {
-    it("should update user provider", () => {
-      setUserProvider(123, "gemini", "openai");
-      const prefs = getUserPreferences(123, "openai");
-
-      expect(prefs.preferredProvider).toBe("gemini");
-    });
-
-    it("should update timestamp", async () => {
-      setUserProvider(123, "openai", "openai");
-      const prefs1 = getUserPreferences(123, "openai");
-      const firstUpdated = prefs1.updatedAt;
-
-      // Small delay to ensure different timestamp
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      setUserProvider(123, "gemini", "openai");
-      const prefs2 = getUserPreferences(123, "openai");
-
-      expect(prefs2.updatedAt.getTime()).toBeGreaterThanOrEqual(
-        firstUpdated.getTime()
-      );
-    });
-
-    it("should preserve other preferences fields", () => {
-      const userId = 888;
-
-      // Create initial preferences
-      const initialPrefs = getUserPreferences(userId, "openai");
-      const initialCreatedAt = initialPrefs.createdAt;
-      const initialUserId = initialPrefs.userId;
-
-      // Update provider
-      setUserProvider(userId, "gemini", "openai");
-
-      const updatedPrefs = userPreferences.get(userId);
-      expect(updatedPrefs?.userId).toBe(initialUserId);
-      expect(updatedPrefs?.createdAt).toBe(initialCreatedAt);
-    });
-  });
-
   describe("ensureRagPipeline()", () => {
     it("should create pipeline if not exists", async () => {
       resetRagPipeline();
       const mockConfig = {
         telegramToken: "test",
         authorizedUsers: [123],
+        adminUsers: [],
         projectPath: "/test",
         claudeTimeout: 300000,
         rateLimiter: {
@@ -1221,6 +1009,7 @@ describe("bot.ts", () => {
         },
         llmApiKeys: { openai: "sk-test" },
         defaultLLMProvider: "openai" as const,
+        defaultEmbeddingProvider: "openai" as const,
         ragStorePath: "/test/rag",
         ragConfig: {
           chunkSize: 300,
@@ -1247,6 +1036,7 @@ describe("bot.ts", () => {
       const mockConfig = {
         telegramToken: "test",
         authorizedUsers: [123],
+        adminUsers: [],
         projectPath: "/test",
         claudeTimeout: 300000,
         rateLimiter: {
@@ -1256,6 +1046,7 @@ describe("bot.ts", () => {
         },
         llmApiKeys: { openai: "sk-test" },
         defaultLLMProvider: "openai" as const,
+        defaultEmbeddingProvider: "openai" as const,
         ragStorePath: "/test/rag",
         ragConfig: {
           chunkSize: 300,
@@ -1348,7 +1139,7 @@ describe("bot.ts", () => {
       const ctx = createMockContext({ from: null });
       vi.mocked(sanitizeText).mockReturnValueOnce("user");
 
-      await getHandler("cmd:start")(ctx);
+      await getContextHandler("cmd:start")(ctx);
 
       expect(ctx.reply).toHaveBeenCalledWith(
         expect.stringContaining("Hello, user")
@@ -1360,28 +1151,25 @@ describe("bot.ts", () => {
       const ctx = createMockContext({ from: { first_name: longName } });
       vi.mocked(sanitizeText).mockReturnValueOnce(longName);
 
-      await getHandler("cmd:start")(ctx);
+      await getContextHandler("cmd:start")(ctx);
 
       // Username should be truncated to 50 chars
       expect(ctx.reply).toHaveBeenCalled();
     });
 
-    it("should handle XSS attempt in message", async () => {
+    it("should handle XSS attempt in message by redirecting to /ask", async () => {
       const ctx = createMockContext({
         message: {
           text: '<script>alert("xss")</script>',
           date: Math.floor(Date.now() / 1000) + 10,
         },
       });
-      vi.mocked(validateUserMessage).mockReturnValueOnce({
-        success: false,
-        error: "Message contains suspicious content",
-      });
 
-      await getHandler("on:message:text")(ctx);
+      await getContextHandler("on:message:text")(ctx);
 
+      // Text messages are now redirected to /ask command
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining("suspicious content")
+        expect.stringContaining("Use /ask command")
       );
     });
   });

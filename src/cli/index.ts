@@ -39,12 +39,6 @@ export interface CLIToolConfig {
  * @param config - Optional configuration for the tool
  * @returns The created CLI tool instance
  * @throws Error if the tool type is unknown
- *
- * @example
- * ```typescript
- * const claudeTool = createCLITool("claude-code");
- * const codexTool = createCLITool("codex", { codexMode: "auto-edit" });
- * ```
  */
 export function createCLITool(
   type: CLIToolType,
@@ -65,16 +59,7 @@ export function createCLITool(
 /**
  * Get all available CLI tools
  *
- * Checks each registered tool for availability and returns
- * only those that are ready to use.
- *
  * @returns Array of available CLI tools
- *
- * @example
- * ```typescript
- * const tools = await getAvailableCLITools();
- * console.log(`Available tools: ${tools.map(t => t.name).join(", ")}`);
- * ```
  */
 export async function getAvailableCLITools(): Promise<readonly CLITool[]> {
   const tools: CLITool[] = [new ClaudeCodeCLI(), new CodexCLI()];
@@ -95,14 +80,6 @@ export async function getAvailableCLITools(): Promise<readonly CLITool[]> {
  * @param type - The type of CLI tool to get
  * @param config - Optional configuration for the tool
  * @returns The CLI tool if available, null otherwise
- *
- * @example
- * ```typescript
- * const tool = await getCLIToolIfAvailable("claude-code");
- * if (tool) {
- *   const result = await tool.execute("/path/to/project", "Analyze this code");
- * }
- * ```
  */
 export async function getCLIToolIfAvailable(
   type: CLIToolType,

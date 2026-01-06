@@ -13,6 +13,7 @@ export interface RateLimiterConfig {
 export interface Config {
   readonly telegramToken: string;
   readonly authorizedUsers: number[];
+  readonly adminUsers: number[];
   readonly projectPath: string;
   readonly claudeTimeout: number;
   readonly rateLimiter: RateLimiterConfig;
@@ -115,29 +116,12 @@ export interface ExtendedConfig extends Config {
   readonly llmApiKeys: LLMApiKeys;
   /** Default LLM provider for completions (excludes claude-code) */
   readonly defaultLLMProvider: "openai" | "gemini" | "anthropic" | "perplexity";
+  /** Default embedding provider for RAG (jina, openai, gemini) */
+  readonly defaultEmbeddingProvider: "openai" | "gemini" | "jina";
   /** Path to store RAG index files */
   readonly ragStorePath: string;
   /** RAG pipeline configuration */
   readonly ragConfig: import("./rag/types.js").RAGConfig;
-}
-
-// =============================================================================
-// User Preferences (per Telegram user)
-// =============================================================================
-
-/**
- * Per-user preferences stored in file system
- * @remarks Allows users to select their preferred LLM provider
- */
-export interface UserPreferences {
-  /** Telegram user ID */
-  readonly userId: number;
-  /** User's preferred LLM provider for completions */
-  readonly preferredProvider: "openai" | "gemini" | "anthropic" | "perplexity";
-  /** When preferences were first created */
-  readonly createdAt: Date;
-  /** When preferences were last updated */
-  readonly updatedAt: Date;
 }
 
 // =============================================================================

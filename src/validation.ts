@@ -1,28 +1,27 @@
 import { RateLimiterConfig } from "./types.js";
+import { getConfigValue } from "./utils.js";
 
-const VALIDATION = {
-  MESSAGE_MIN_LENGTH: 5,
-  MESSAGE_MAX_LENGTH: 2000,
-  USERNAME_MAX_LENGTH: 100,
-  MAX_TELEGRAM_USER_ID: 999999999999,
-} as const;
+const MAX_TELEGRAM_USER_ID = 999999999999;
 
 function validateUserMessageSimple(message: unknown): ValidationResult<string> {
   if (typeof message !== "string") {
     return { success: false, error: "Message must be a string" };
   }
 
-  if (message.length < VALIDATION.MESSAGE_MIN_LENGTH) {
+  const minLength = getConfigValue("VALIDATION_MESSAGE_MIN_LENGTH");
+  const maxLength = getConfigValue("VALIDATION_MESSAGE_MAX_LENGTH");
+
+  if (message.length < minLength) {
     return {
       success: false,
-      error: `Message too short (minimum ${VALIDATION.MESSAGE_MIN_LENGTH} characters)`,
+      error: `Message too short (minimum ${minLength} characters)`,
     };
   }
 
-  if (message.length > VALIDATION.MESSAGE_MAX_LENGTH) {
+  if (message.length > maxLength) {
     return {
       success: false,
-      error: `Message too long (maximum ${VALIDATION.MESSAGE_MAX_LENGTH} characters)`,
+      error: `Message too long (maximum ${maxLength} characters)`,
     };
   }
 
@@ -78,7 +77,7 @@ function validateTelegramUserIdSimple(
     };
   }
 
-  if (userId > VALIDATION.MAX_TELEGRAM_USER_ID) {
+  if (userId > MAX_TELEGRAM_USER_ID) {
     return { success: false, error: "User ID too large" };
   }
 
@@ -94,7 +93,7 @@ function validateUsernameSimple(username: unknown): ValidationResult<string> {
     return { success: false, error: "Username cannot be empty" };
   }
 
-  if (username.length > VALIDATION.USERNAME_MAX_LENGTH) {
+  if (username.length > getConfigValue("VALIDATION_USERNAME_MAX_LENGTH")) {
     return { success: false, error: "Username too long" };
   }
 
@@ -125,11 +124,10 @@ export function sanitizeMessage(message: string): string {
     // (e.g., "Hello > world" -> "Hello  world" -> "Hello world")
     .replace(/[<>]/g, "")
     .replace(/\s+/g, " ")
-    .substring(0, VALIDATION.MESSAGE_MAX_LENGTH);
+    .substring(0, getConfigValue("VALIDATION_MESSAGE_MAX_LENGTH"));
 }
 
 class SimpleLimiter {
-  private static readonly MAX_TRACKED_USERS = 10000;
   private requests = new Map<number, number[]>();
   private readonly config: RateLimiterConfig;
   private cleanupIntervalId: NodeJS.Timeout | null = null;
@@ -141,7 +139,8 @@ class SimpleLimiter {
 
   public isAllowed(userId: number): boolean {
     // Prevent unbounded memory growth
-    if (this.requests.size >= SimpleLimiter.MAX_TRACKED_USERS) {
+    const maxTrackedUsers = getConfigValue("RATE_LIMITER_MAX_TRACKED_USERS");
+    if (this.requests.size >= maxTrackedUsers) {
       this.cleanup();
     }
 

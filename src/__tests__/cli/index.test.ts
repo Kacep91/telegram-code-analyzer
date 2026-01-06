@@ -7,9 +7,9 @@ const {
   codexIsAvailable,
   codexExecute,
 } = vi.hoisted(() => ({
-  claudeCodeIsAvailable: vi.fn<[], Promise<boolean>>(),
+  claudeCodeIsAvailable: vi.fn<() => Promise<boolean>>(),
   claudeCodeExecute: vi.fn(),
-  codexIsAvailable: vi.fn<[], Promise<boolean>>(),
+  codexIsAvailable: vi.fn<() => Promise<boolean>>(),
   codexExecute: vi.fn(),
 }));
 
@@ -79,11 +79,8 @@ describe("CLI Index Module", () => {
     });
 
     it("should throw Error for unknown CLI tool type", () => {
-      // TypeScript prevents this at compile time, but we test runtime behavior
-      // by casting to bypass type checking
-      const unknownType = "unknown-tool" as "claude-code";
-
-      expect(() => createCLITool(unknownType)).toThrow(
+      // @ts-expect-error testing invalid runtime input
+      expect(() => createCLITool("unknown-tool")).toThrow(
         "Unknown CLI tool type: unknown-tool"
       );
     });

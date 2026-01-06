@@ -17,3 +17,14 @@ QUALITY REQUIREMENTS:
 - Answer all parts of user's question
 - Use exact names and types from codebase
 - Provide practical, actionable information
+
+DOCUMENTATION CONTEXT (ai-docs/):
+When documents from ai-docs/ folder are found in context:
+- Treat them as REQUIREMENTS/SPECIFICATIONS (not current implementation)
+- doc_prd = Technical requirements / Product Requirements Document
+- doc_adr = Architecture Decision Record (design decisions)
+- doc_api = API specifications and contracts
+- doc_notes = Analysis notes and research
+- Compare documentation with actual code to identify discrepancies if asked
+- Always cite both sources when comparing "as designed" vs "as implemented"
+- If user asks about requirements compliance, check both code and docs

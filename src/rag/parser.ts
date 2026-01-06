@@ -6,8 +6,7 @@ import {
   validatePathWithinBase,
   getAllowedBasePath,
 } from "../cli/path-validator.js";
-
-const MAX_DIRECTORY_DEPTH = 20;
+import { getConfigValue } from "../utils.js";
 
 /**
  * Parsed entity from source file
@@ -241,9 +240,10 @@ export async function findTypeScriptFiles(
 
   async function traverse(currentPath: string, depth: number): Promise<void> {
     // Security: Limit recursion depth to prevent resource exhaustion
-    if (depth > MAX_DIRECTORY_DEPTH) {
+    const maxDepth = getConfigValue("RAG_MAX_DIRECTORY_DEPTH");
+    if (depth > maxDepth) {
       console.warn(
-        `[Parser] Max directory depth (${MAX_DIRECTORY_DEPTH}) reached at ${currentPath}`
+        `[Parser] Max directory depth (${maxDepth}) reached at ${currentPath}`
       );
       return;
     }

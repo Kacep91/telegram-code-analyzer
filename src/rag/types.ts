@@ -1,17 +1,28 @@
 import { z } from "zod";
 
-// Chunk types (AST-based)
+// Chunk types (AST-based for code, doc-based for documentation)
 export const ChunkTypeSchema = z.enum([
+  // Code entities
   "function",
   "class",
   "interface",
   "type",
   "constant",
   "file",
+  // Documentation entities
+  "doc_section",
+  "doc_prd",
+  "doc_adr",
+  "doc_api",
+  "doc_notes",
 ]);
 export type ChunkType = z.infer<typeof ChunkTypeSchema>;
 
-// Code chunk
+// Document types for ai-docs/
+export const DocTypeSchema = z.enum(["prd", "adr", "api", "notes"]);
+export type DocType = z.infer<typeof DocTypeSchema>;
+
+// Code chunk (also used for documentation chunks)
 export interface CodeChunk {
   readonly id: string;
   readonly content: string;
@@ -22,6 +33,7 @@ export interface CodeChunk {
   readonly endLine: number;
   readonly parentId?: string; // For parent retrieval
   readonly tokenCount: number;
+  readonly docType?: DocType; // Only for documentation chunks from ai-docs/
 }
 
 // Index metadata

@@ -72,8 +72,8 @@ const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 /** Default timeout for Gemini requests (60 seconds) */
 const GEMINI_DEFAULT_TIMEOUT = 60000;
 
-/** Default embedding model */
-const DEFAULT_EMBEDDING_MODEL = "text-embedding-004";
+/** Default embedding model (gemini-embedding-001 is newest, 768-3072 dims) */
+const DEFAULT_EMBEDDING_MODEL = "gemini-embedding-001";
 
 /** Default chat model */
 const DEFAULT_CHAT_MODEL = "gemini-2.0-flash";

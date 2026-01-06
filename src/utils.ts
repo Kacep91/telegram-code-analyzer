@@ -3,6 +3,7 @@
  */
 import { promises as fs } from "fs";
 import { join } from "path";
+import { spawn } from "child_process";
 import { z } from "zod";
 import {
   Config,
@@ -12,22 +13,76 @@ import {
 } from "./types.js";
 import { RAGConfigSchema } from "./rag/types.js";
 
-const RATE_LIMIT = {
-  MAX_REQUESTS_PER_MINUTE: 10,
-  WINDOW_SIZE_MS: 60_000,
-  CLEANUP_INTERVAL_MS: 300_000,
-} as const;
-
 const ANALYSIS = {
   DEFAULT_TIMEOUT_MS: 300_000,
-  MAX_SUMMARY_LENGTH: 300,
-  DEFAULT_OUTPUT_DIR: "temp",
 } as const;
 
 const LLM = {
   DEFAULT_PROVIDER: "openai",
+  DEFAULT_EMBEDDING_PROVIDER: "jina",
   DEFAULT_RAG_STORE_PATH: "./rag-index",
 } as const;
+
+// =============================================================================
+// Centralized Configuration Defaults
+// =============================================================================
+
+/**
+ * Default values for all configurable parameters.
+ * Can be overridden via environment variables.
+ */
+const DEFAULTS = {
+  // Rate limiting
+  RATE_LIMIT_MAX_REQUESTS: 10,
+  RATE_LIMIT_WINDOW_MS: 60_000,
+  RATE_LIMIT_CLEANUP_INTERVAL_MS: 300_000,
+
+  // Analysis
+  MAX_SUMMARY_LENGTH: 300,
+  OUTPUT_DIR: "temp",
+
+  // Validation
+  VALIDATION_MESSAGE_MIN_LENGTH: 5,
+  VALIDATION_MESSAGE_MAX_LENGTH: 2000,
+  VALIDATION_USERNAME_MAX_LENGTH: 100,
+  RATE_LIMITER_MAX_TRACKED_USERS: 10_000,
+
+  // Display
+  USERNAME_DISPLAY_LENGTH: 50,
+  RAG_MAX_SOURCES_DISPLAY: 3,
+
+  // Claude CLI
+  CLAUDE_AVAILABILITY_CHECK_TIMEOUT: 5_000,
+
+  // RAG
+  TOKENS_CHARS_RATIO: 4,
+  RAG_MAX_DIRECTORY_DEPTH: 20,
+  RAG_EMBEDDING_BATCH_SIZE: 10,
+} as const;
+
+export type ConfigKey = keyof typeof DEFAULTS;
+
+/**
+ * Gets configuration value with environment variable override.
+ * Falls back to default if env var not set or invalid.
+ * @param key - Configuration key from DEFAULTS
+ * @returns Configuration value (from env or default)
+ */
+export function getConfigValue<K extends ConfigKey>(key: K): (typeof DEFAULTS)[K] {
+  const envValue = process.env[key];
+  if (envValue === undefined) return DEFAULTS[key];
+
+  const defaultValue = DEFAULTS[key];
+  if (typeof defaultValue === "number") {
+    const parsed = parseInt(envValue, 10);
+    // Return default for NaN or non-positive values when default is positive
+    if (isNaN(parsed) || (defaultValue > 0 && parsed <= 0)) {
+      return defaultValue;
+    }
+    return parsed as (typeof DEFAULTS)[K];
+  }
+  return envValue as (typeof DEFAULTS)[K];
+}
 
 export enum LogLevel {
   DEBUG = 0,
@@ -97,7 +152,7 @@ export async function ensureDir(dirPath: string): Promise<void> {
 export async function saveAnalysis(
   question: string,
   content: string,
-  outputDir: string = ANALYSIS.DEFAULT_OUTPUT_DIR
+  outputDir: string = getConfigValue("OUTPUT_DIR")
 ): Promise<string> {
   logger.debug(`Saving analysis to directory: ${outputDir}`);
   await ensureDir(outputDir);
@@ -135,7 +190,7 @@ ${content}
  */
 export function createSummary(
   content: string,
-  maxLength: number = ANALYSIS.MAX_SUMMARY_LENGTH
+  maxLength: number = getConfigValue("MAX_SUMMARY_LENGTH")
 ): string {
   if (content.length <= maxLength) {
     return content;
@@ -183,12 +238,12 @@ const RateLimiterConfigSchema = z.object({
   maxRequests: z
     .number()
     .positive()
-    .default(RATE_LIMIT.MAX_REQUESTS_PER_MINUTE),
-  windowMs: z.number().positive().default(RATE_LIMIT.WINDOW_SIZE_MS),
+    .default(DEFAULTS.RATE_LIMIT_MAX_REQUESTS),
+  windowMs: z.number().positive().default(DEFAULTS.RATE_LIMIT_WINDOW_MS),
   cleanupIntervalMs: z
     .number()
     .positive()
-    .default(RATE_LIMIT.CLEANUP_INTERVAL_MS),
+    .default(DEFAULTS.RATE_LIMIT_CLEANUP_INTERVAL_MS),
 });
 
 /**
@@ -199,6 +254,7 @@ const ConfigSchema = z.object({
   authorizedUsers: z
     .array(z.number().positive())
     .min(1, "At least one authorized user required"),
+  adminUsers: z.array(z.number().positive()).default([]),
   projectPath: z.string().min(1, "PROJECT_PATH is required"),
   claudeTimeout: z.number().positive().default(ANALYSIS.DEFAULT_TIMEOUT_MS),
   rateLimiter: RateLimiterConfigSchema,
@@ -221,18 +277,9 @@ function parseEnvNumber(
  */
 function loadRateLimiterConfig(): RateLimiterConfig {
   return {
-    maxRequests: parseEnvNumber(
-      process.env.RATE_LIMIT_MAX_REQUESTS,
-      RATE_LIMIT.MAX_REQUESTS_PER_MINUTE
-    ),
-    windowMs: parseEnvNumber(
-      process.env.RATE_LIMIT_WINDOW_MS,
-      RATE_LIMIT.WINDOW_SIZE_MS
-    ),
-    cleanupIntervalMs: parseEnvNumber(
-      process.env.RATE_LIMIT_CLEANUP_INTERVAL_MS,
-      RATE_LIMIT.CLEANUP_INTERVAL_MS
-    ),
+    maxRequests: getConfigValue("RATE_LIMIT_MAX_REQUESTS"),
+    windowMs: getConfigValue("RATE_LIMIT_WINDOW_MS"),
+    cleanupIntervalMs: getConfigValue("RATE_LIMIT_CLEANUP_INTERVAL_MS"),
   };
 }
 
@@ -243,6 +290,10 @@ export function loadConfig(): Config {
   const rawConfig = {
     telegramToken: process.env.TELEGRAM_BOT_TOKEN ?? "",
     authorizedUsers: (process.env.AUTHORIZED_USERS ?? "")
+      .split(",")
+      .map((id) => parseInt(id.trim(), 10))
+      .filter((id) => !isNaN(id) && id > 0),
+    adminUsers: (process.env.ADMIN_USERS ?? "")
       .split(",")
       .map((id) => parseInt(id.trim(), 10))
       .filter((id) => !isNaN(id) && id > 0),
@@ -284,6 +335,9 @@ const ExtendedConfigSchema = ConfigSchema.extend({
   defaultLLMProvider: z
     .enum(["openai", "gemini", "anthropic", "perplexity"])
     .default(LLM.DEFAULT_PROVIDER),
+  defaultEmbeddingProvider: z
+    .enum(["openai", "gemini", "jina"])
+    .default(LLM.DEFAULT_EMBEDDING_PROVIDER),
   ragStorePath: z.string().min(1).default(LLM.DEFAULT_RAG_STORE_PATH),
   ragConfig: RAGConfigSchema,
 }).refine(
@@ -362,6 +416,8 @@ export function loadExtendedConfig(): ExtendedConfig {
     llmApiKeys: loadLLMApiKeys(),
     defaultLLMProvider:
       process.env.DEFAULT_LLM_PROVIDER || LLM.DEFAULT_PROVIDER,
+    defaultEmbeddingProvider:
+      process.env.DEFAULT_EMBEDDING_PROVIDER || LLM.DEFAULT_EMBEDDING_PROVIDER,
     ragStorePath: process.env.RAG_STORE_PATH || LLM.DEFAULT_RAG_STORE_PATH,
     ragConfig: {
       chunkSize: parseEnvNumber(process.env.RAG_CHUNK_SIZE, 300),
@@ -392,4 +448,195 @@ export function getConfiguredProviders(
   if (apiKeys.perplexity) providers.push("perplexity");
 
   return providers;
+}
+
+// =============================================================================
+// Git Operations (using spawn for security)
+// =============================================================================
+
+const GIT_TIMEOUT_MS = 30_000;
+
+interface GitCommandResult {
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly exitCode: number;
+}
+
+/**
+ * Execute git command safely using spawn
+ * @param args - Git command arguments
+ * @param cwd - Working directory
+ * @param timeout - Timeout in ms (default 30s)
+ */
+export function executeGitCommand(
+  args: readonly string[],
+  cwd: string,
+  timeout: number = GIT_TIMEOUT_MS
+): Promise<GitCommandResult> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn("git", [...args], {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let finished = false;
+
+    const timer = setTimeout(() => {
+      if (!finished) {
+        finished = true;
+        proc.kill("SIGTERM");
+        reject(new Error(`Git command timeout after ${timeout}ms`));
+      }
+    }, timeout);
+
+    proc.stdout?.on("data", (data: Buffer) => {
+      stdout += data.toString();
+    });
+
+    proc.stderr?.on("data", (data: Buffer) => {
+      stderr += data.toString();
+    });
+
+    proc.on("close", (code) => {
+      if (!finished) {
+        finished = true;
+        clearTimeout(timer);
+        resolve({ stdout, stderr, exitCode: code ?? 1 });
+      }
+    });
+
+    proc.on("error", (error) => {
+      if (!finished) {
+        finished = true;
+        clearTimeout(timer);
+        reject(new Error(`Git spawn failed: ${error.message}`));
+      }
+    });
+  });
+}
+
+/**
+ * Get last commit date from git repository
+ * @param projectPath - Path to git repository
+ * @returns ISO date string or null if failed
+ */
+export async function getLastCommitDate(
+  projectPath: string
+): Promise<string | null> {
+  try {
+    const result = await executeGitCommand(
+      ["log", "-1", "--format=%cI"],
+      projectPath
+    );
+
+    if (result.exitCode === 0 && result.stdout.trim()) {
+      return result.stdout.trim();
+    }
+    return null;
+  } catch (error) {
+    logger.warn(
+      `Failed to get last commit date: ${error instanceof Error ? error.message : String(error)}`
+    );
+    return null;
+  }
+}
+
+/**
+ * Execute git pull
+ * @param projectPath - Path to git repository
+ * @returns true if successful
+ */
+export async function gitPull(projectPath: string): Promise<boolean> {
+  try {
+    const result = await executeGitCommand(["pull"], projectPath);
+
+    if (result.exitCode === 0) {
+      logger.info("Git pull successful");
+      return true;
+    }
+
+    logger.warn(`Git pull failed with exit code ${result.exitCode}: ${result.stderr}`);
+    return false;
+  } catch (error) {
+    logger.warn(
+      `Git pull failed: ${error instanceof Error ? error.message : String(error)}`
+    );
+    return false;
+  }
+}
+
+// =============================================================================
+// Telegram Formatting
+// =============================================================================
+
+const TELEGRAM_MESSAGE_LIMIT = 4000;
+
+/**
+ * Converts Markdown text to Telegram HTML format.
+ * Handles: **bold**, *italic*, `code`, ### headers
+ * @param text - Markdown text from LLM
+ * @returns HTML-formatted text for Telegram
+ */
+export function formatForTelegram(text: string): string {
+  // 1. Escape HTML entities first
+  let result = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
+  // 2. Convert Markdown to HTML
+  result = result
+    // **bold** → <b>bold</b>
+    .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
+    // *italic* → <i>italic</i> (must be after bold)
+    .replace(/\*(.+?)\*/g, "<i>$1</i>")
+    // `code` → <code>code</code>
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    // ### Header → <b>Header</b>
+    .replace(/^#{1,6}\s+(.+)$/gm, "<b>$1</b>");
+
+  return result;
+}
+
+/**
+ * Splits long message into chunks respecting Telegram's 4096 char limit.
+ * Tries to split at paragraph boundaries, then line breaks, then spaces.
+ * @param text - Text to split
+ * @param maxLength - Maximum chunk length (default 4000 for safety margin)
+ * @returns Array of message chunks
+ */
+export function splitMessage(
+  text: string,
+  maxLength: number = TELEGRAM_MESSAGE_LIMIT
+): string[] {
+  if (text.length <= maxLength) return [text];
+
+  const parts: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > 0) {
+    if (remaining.length <= maxLength) {
+      parts.push(remaining);
+      break;
+    }
+
+    // Find best split point: paragraph break > line break > space
+    let splitIndex = remaining.lastIndexOf("\n\n", maxLength);
+    if (splitIndex === -1 || splitIndex < maxLength / 2) {
+      splitIndex = remaining.lastIndexOf("\n", maxLength);
+    }
+    if (splitIndex === -1 || splitIndex < maxLength / 2) {
+      splitIndex = remaining.lastIndexOf(" ", maxLength);
+    }
+    if (splitIndex === -1) {
+      splitIndex = maxLength;
+    }
+
+    parts.push(remaining.substring(0, splitIndex).trim());
+    remaining = remaining.substring(splitIndex).trim();
+  }
+
+  return parts;
 }

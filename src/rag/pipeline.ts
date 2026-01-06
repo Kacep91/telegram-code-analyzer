@@ -12,18 +12,17 @@ import type {
 } from "../llm/types.js";
 import { CodeVectorStore } from "./store.js";
 import { findTypeScriptFiles } from "./parser.js";
-import { chunkCodebase } from "./chunker.js";
+import { chunkCodebase, chunkDocumentSections } from "./chunker.js";
+import { findDocumentFiles, parseMarkdownFile } from "./doc-parser.js";
 import { rerankWithLLM, resolveParentChunks } from "./retriever.js";
 import { RAGConfigSchema } from "./types.js";
+import { getConfigValue } from "../utils.js";
 
 /** Index version for compatibility checking */
-const INDEX_VERSION = "1.0.0";
+const INDEX_VERSION = "1.1.0"; // Updated for ai-docs support
 
 /** Default filename for persisted index */
 const DEFAULT_STORE_FILENAME = "rag-index.json";
-
-/** Batch size for embedding generation */
-const EMBEDDING_BATCH_SIZE = 10;
 
 /**
  * RAG Pipeline for codebase indexing and querying
@@ -73,25 +72,57 @@ export class RAGPipeline {
       throw new Error(`No TypeScript files found in ${projectPath}`);
     }
 
-    // Parse and chunk
-    const chunks = await chunkCodebase(files, this.config);
-    console.log(`[RAG] Created ${chunks.length} chunks`);
+    // Parse and chunk TypeScript files
+    const codeChunks = await chunkCodebase(files, this.config);
+    console.log(`[RAG] Created ${codeChunks.length} code chunks`);
 
-    if (chunks.length === 0) {
+    // Also index documentation from ai-docs/ if present
+    const docsPath = join(projectPath, "ai-docs");
+    let docChunks: CodeChunk[] = [];
+
+    try {
+      const docFiles = await findDocumentFiles(docsPath);
+      if (docFiles.length > 0) {
+        console.log(`[RAG] Found ${docFiles.length} documentation files in ai-docs/`);
+
+        for (const docFile of docFiles) {
+          try {
+            const doc = await parseMarkdownFile(docFile);
+            const chunks = chunkDocumentSections(doc, this.config);
+            docChunks.push(...chunks);
+          } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            console.warn(`[RAG] Failed to parse doc ${docFile}: ${errorMsg}`);
+          }
+        }
+
+        console.log(`[RAG] Created ${docChunks.length} documentation chunks`);
+      }
+    } catch {
+      // ai-docs folder doesn't exist - that's fine, skip silently
+      console.log(`[RAG] No ai-docs folder found, skipping documentation indexing`);
+    }
+
+    // Combine code and documentation chunks
+    const allChunks = [...codeChunks, ...docChunks];
+
+    if (allChunks.length === 0) {
       throw new Error("No chunks generated from files");
     }
 
     // Store chunks for parent retrieval
-    this.allChunks = [...chunks];
+    this.allChunks = allChunks;
+    const chunks = allChunks;
 
     // Generate embeddings in batches
     const embeddings: number[][] = [];
-    const totalBatches = Math.ceil(chunks.length / EMBEDDING_BATCH_SIZE);
+    const batchSize = getConfigValue("RAG_EMBEDDING_BATCH_SIZE");
+    const totalBatches = Math.ceil(chunks.length / batchSize);
 
-    for (let i = 0; i < chunks.length; i += EMBEDDING_BATCH_SIZE) {
-      const batch = chunks.slice(i, i + EMBEDDING_BATCH_SIZE);
+    for (let i = 0; i < chunks.length; i += batchSize) {
+      const batch = chunks.slice(i, i + batchSize);
       const contents = batch.map((c) => c.content);
-      const batchNumber = Math.floor(i / EMBEDDING_BATCH_SIZE) + 1;
+      const batchNumber = Math.floor(i / batchSize) + 1;
 
       console.log(`[RAG] Embedding batch ${batchNumber}/${totalBatches}`);
 

@@ -14,11 +14,10 @@ import {
   FileSystemError,
   FileOperation,
 } from "../errors/index.js";
-import { saveAnalysis } from "../utils.js";
+import { saveAnalysis, getConfigValue } from "../utils.js";
 import { validateProjectPath } from "./path-validator.js";
 
 const DEFAULT_TIMEOUT_MS = 300000; // 5 minutes
-const AVAILABILITY_CHECK_TIMEOUT_MS = 5000;
 
 /**
  * Claude Code CLI tool implementation
@@ -26,49 +25,97 @@ const AVAILABILITY_CHECK_TIMEOUT_MS = 5000;
 export class ClaudeCodeCLI implements CLITool {
   readonly name = "claude-code" as const;
 
+  /** Cached path to Claude CLI (reset on class instantiation) */
+  private cachedClaudePath: string | null = null;
+
   /**
-   * Get Claude CLI command based on configuration
+   * Check if a command exists and is executable
    */
-  private getClaudeCommand(): string {
-    return process.env["CLAUDE_CLI_PATH"] ?? "claude";
+  private async checkCommandExists(command: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      const timeout = getConfigValue("CLAUDE_AVAILABILITY_CHECK_TIMEOUT");
+      const proc = spawn(command, ["--version"], {
+        stdio: ["ignore", "ignore", "ignore"],
+      });
+
+      let finished = false;
+
+      const timer = setTimeout(() => {
+        if (!finished) {
+          finished = true;
+          proc.kill("SIGTERM");
+          resolve(false);
+        }
+      }, timeout);
+
+      proc.on("close", (code) => {
+        if (!finished) {
+          finished = true;
+          clearTimeout(timer);
+          resolve(code === 0);
+        }
+      });
+
+      proc.on("error", () => {
+        if (!finished) {
+          finished = true;
+          clearTimeout(timer);
+          resolve(false);
+        }
+      });
+    });
+  }
+
+  /**
+   * Find Claude CLI command with auto-detection
+   * Searches in common locations if not explicitly configured
+   */
+  private async findClaudeCommand(): Promise<string> {
+    // Return cached path if available
+    if (this.cachedClaudePath) {
+      return this.cachedClaudePath;
+    }
+
+    // 1. Check explicit path from environment
+    const envPath = process.env["CLAUDE_CLI_PATH"];
+    if (envPath?.trim()) {
+      this.cachedClaudePath = envPath;
+      return envPath;
+    }
+
+    // 2. Search in common locations
+    const home = process.env["HOME"] ?? "";
+    const candidates = [
+      "claude", // System PATH
+      join(home, ".local/bin/claude"),
+      join(home, ".claude/local/claude"),
+      "/usr/local/bin/claude",
+      "/opt/homebrew/bin/claude",
+    ];
+
+    for (const candidate of candidates) {
+      if (await this.checkCommandExists(candidate)) {
+        this.cachedClaudePath = candidate;
+        return candidate;
+      }
+    }
+
+    throw new SystemError(
+      "Claude CLI not found. Install: npm install -g @anthropic-ai/claude-code or set CLAUDE_CLI_PATH",
+      SystemErrorSubType.CONFIG
+    );
   }
 
   /**
    * Check if Claude Code CLI is available
    */
   async isAvailable(): Promise<boolean> {
-    return new Promise((resolve) => {
-      const command = this.getClaudeCommand();
-      const childProcess = spawn(command, ["--version"], {
-        stdio: ["ignore", "ignore", "ignore"],
-      });
-
-      let finished = false;
-
-      const timeoutId = setTimeout(() => {
-        if (!finished) {
-          finished = true;
-          childProcess.kill("SIGTERM");
-          resolve(false);
-        }
-      }, AVAILABILITY_CHECK_TIMEOUT_MS);
-
-      childProcess.on("close", (code) => {
-        if (!finished) {
-          finished = true;
-          clearTimeout(timeoutId);
-          resolve(code === 0);
-        }
-      });
-
-      childProcess.on("error", () => {
-        if (!finished) {
-          finished = true;
-          clearTimeout(timeoutId);
-          resolve(false);
-        }
-      });
-    });
+    try {
+      await this.findClaudeCommand();
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -83,9 +130,9 @@ export class ClaudeCodeCLI implements CLITool {
     await validateProjectPath(projectPath);
 
     const startTime = Date.now();
+    const command = await this.findClaudeCommand();
 
     return new Promise((resolve, reject) => {
-      const command = this.getClaudeCommand();
       const childProcess = spawn(
         command,
         [

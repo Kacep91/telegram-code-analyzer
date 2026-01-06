@@ -7,6 +7,7 @@
  * - Vector similarity search
  * - LLM-based reranking
  * - Answer generation with source attribution
+ * - Documentation indexing from ai-docs/
  */
 
 // Types
@@ -16,15 +17,29 @@ export type {
   SearchResult,
   RAGConfig,
   RAGQueryResult,
+  DocType,
 } from "./types.js";
-export { ChunkTypeSchema, RAGConfigSchema } from "./types.js";
+export { ChunkTypeSchema, RAGConfigSchema, DocTypeSchema } from "./types.js";
 
-// Parser
+// Code Parser
 export { parseTypeScriptFile, findTypeScriptFiles } from "./parser.js";
 export type { ParsedEntity } from "./parser.js";
 
+// Documentation Parser
+export {
+  parseMarkdownFile,
+  findDocumentFiles,
+  detectDocumentType,
+} from "./doc-parser.js";
+export type { ParsedDocument, DocSection } from "./doc-parser.js";
+
 // Chunker
-export { chunkEntities, chunkCodebase, estimateTokens } from "./chunker.js";
+export {
+  chunkEntities,
+  chunkCodebase,
+  chunkDocumentSections,
+  estimateTokens,
+} from "./chunker.js";
 
 // Store
 export { CodeVectorStore } from "./store.js";

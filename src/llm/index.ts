@@ -28,6 +28,12 @@ export { PerplexityProvider, PerplexityModelSchema } from "./perplexity.js";
 export type { PerplexityModel } from "./perplexity.js";
 export { JinaEmbeddingProvider, JinaProviderConfigSchema } from "./jina.js";
 export type { JinaProviderConfig, JinaProviderConfigInput } from "./jina.js";
+export {
+  CLICompletionAdapter,
+  createCLICompletionAdapter,
+  checkCLIAvailability,
+} from "./cli-adapter.js";
+export type { CLIAdapterConfig } from "./cli-adapter.js";
 
 import type {
   LLMProviderType,
@@ -36,12 +42,13 @@ import type {
   LLMFullProvider,
   ProviderFactoryConfig,
 } from "./types.js";
-import { ProviderFactoryConfigSchema } from "./types.js";
+import { ProviderFactoryConfigSchema, isCLIProvider } from "./types.js";
 import { OpenAIProvider } from "./openai.js";
 import { GeminiProvider } from "./gemini.js";
 import { AnthropicProvider } from "./anthropic.js";
 import { PerplexityProvider } from "./perplexity.js";
 import { JinaEmbeddingProvider } from "./jina.js";
+import { createCLICompletionAdapter } from "./cli-adapter.js";
 
 // =============================================================================
 // Provider Models Registry
@@ -59,8 +66,8 @@ export const PROVIDER_MODELS = {
   },
   gemini: {
     chat: ["gemini-2.5-pro", "gemini-2.0-flash"],
-    embedding: ["text-embedding-004", "gemini-embedding-001"],
-    default: { chat: "gemini-2.0-flash", embedding: "text-embedding-004" },
+    embedding: ["gemini-embedding-001", "text-embedding-004"],
+    default: { chat: "gemini-2.0-flash", embedding: "gemini-embedding-001" },
   },
   anthropic: {
     chat: ["claude-opus-4-5-20250514", "claude-sonnet-4-5-20250514"],
@@ -131,8 +138,9 @@ export function createCompletionProvider(
     case "perplexity":
       return new PerplexityProvider({ apiKey });
     case "claude-code":
+    case "codex":
       throw new Error(
-        "claude-code provider must be created directly, not through factory"
+        `${type} is a CLI provider and must be created via createCLICompletionAdapter, not through factory`
       );
     case "jina":
       throw new Error(
@@ -162,7 +170,7 @@ export function createEmbeddingProvider(
   type: LLMProviderType,
   apiKey: string
 ): LLMEmbeddingProvider {
-  if (type === "anthropic" || type === "perplexity" || type === "claude-code") {
+  if (type === "anthropic" || type === "perplexity" || isCLIProvider(type)) {
     throw new Error(
       `${type} does not support embeddings. Use OpenAI, Gemini, or Jina instead.`
     );
@@ -176,6 +184,7 @@ export function createEmbeddingProvider(
     case "jina":
       return new JinaEmbeddingProvider({ apiKey });
     default: {
+      // TypeScript narrows type after if-check, so this shouldn't be reachable
       const exhaustiveCheck: never = type;
       throw new Error(`Unknown embedding provider type: ${exhaustiveCheck}`);
     }
@@ -200,7 +209,7 @@ export function createFullProvider(
   type: LLMProviderType,
   apiKey: string
 ): LLMFullProvider {
-  if (type === "anthropic" || type === "perplexity" || type === "claude-code") {
+  if (type === "anthropic" || type === "perplexity" || isCLIProvider(type)) {
     throw new Error(
       `${type} does not support embeddings. Use OpenAI or Gemini for full provider.`
     );
@@ -216,6 +225,7 @@ export function createFullProvider(
         "Jina only supports embeddings. Use createEmbeddingProvider instead."
       );
     default: {
+      // TypeScript narrows type after if-check, so this shouldn't be reachable
       const exhaustiveCheck: never = type;
       throw new Error(`Unknown full provider type: ${exhaustiveCheck}`);
     }
@@ -317,11 +327,10 @@ export async function checkProviderAvailability(
   type: LLMProviderType,
   apiKey: string
 ): Promise<{ available: boolean; error?: string }> {
-  if (type === "claude-code") {
+  if (isCLIProvider(type)) {
     return {
       available: false,
-      error:
-        "claude-code provider availability check not supported via factory",
+      error: `${type} is a CLI provider - use checkCLIAvailability instead`,
     };
   }
 
@@ -333,5 +342,162 @@ export async function checkProviderAvailability(
       available: false,
       error: error instanceof Error ? error.message : "Unknown error",
     };
+  }
+}
+
+// =============================================================================
+// Completion Provider with CLI Fallback
+// =============================================================================
+
+/**
+ * Configuration for completion provider with fallback
+ */
+export interface CompletionProviderFallbackConfig {
+  /** API keys for LLM providers */
+  readonly apiKeys?: ProviderFactoryConfig;
+  /** Preferred provider type (excludes jina which is embedding-only) */
+  readonly preferredProvider?: Exclude<LLMProviderType, "jina">;
+  /** Project path for CLI fallback (defaults to cwd) */
+  readonly projectPath?: string;
+  /** Timeout for CLI operations in milliseconds */
+  readonly cliTimeout?: number;
+}
+
+/**
+ * Result of getting completion provider with fallback
+ */
+export interface CompletionProviderResult {
+  /** The completion provider instance */
+  readonly provider: LLMCompletionProvider;
+  /** Type of provider returned */
+  readonly providerType: LLMProviderType;
+  /** Whether CLI fallback was used */
+  readonly isCLIFallback: boolean;
+}
+
+/**
+ * Get a completion provider with CLI fallback
+ *
+ * This function tries to create an API-based completion provider first,
+ * and falls back to CLI tools (Claude Code CLI or Codex CLI) if no API keys
+ * are available.
+ *
+ * @param config - Configuration for provider selection
+ * @returns Completion provider result with provider instance and metadata
+ * @throws Error if no provider is available (neither API nor CLI)
+ *
+ * @remarks
+ * Priority order for API providers:
+ * 1. Preferred provider (if specified and API key available)
+ * 2. OpenAI
+ * 3. Gemini
+ * 4. Anthropic
+ * 5. Perplexity
+ *
+ * CLI fallback order:
+ * 1. Claude Code CLI (preferred)
+ * 2. Codex CLI
+ *
+ * @example
+ * ```typescript
+ * // With API keys
+ * const result = await getCompletionProviderWithFallback({
+ *   apiKeys: { openaiApiKey: "sk-..." }
+ * });
+ *
+ * // Without API keys (will use CLI if available)
+ * const result = await getCompletionProviderWithFallback({});
+ *
+ * console.log(`Using provider: ${result.providerType}`);
+ * console.log(`Is CLI fallback: ${result.isCLIFallback}`);
+ *
+ * const response = await result.provider.complete("Hello!");
+ * ```
+ */
+export async function getCompletionProviderWithFallback(
+  config: CompletionProviderFallbackConfig = {}
+): Promise<CompletionProviderResult> {
+  const { apiKeys, preferredProvider, projectPath, cliTimeout } = config;
+
+  // Try preferred provider first if specified (skip CLI providers - they don't use API keys)
+  if (preferredProvider && !isCLIProvider(preferredProvider) && apiKeys) {
+    const apiKey = getApiKeyForProvider(preferredProvider, apiKeys);
+    if (apiKey) {
+      try {
+        const provider = createCompletionProvider(preferredProvider, apiKey);
+        return {
+          provider,
+          providerType: preferredProvider,
+          isCLIFallback: false,
+        };
+      } catch {
+        // Fall through to other providers
+      }
+    }
+  }
+
+  // Try API providers in priority order
+  if (apiKeys) {
+    const providerOrder: Array<
+      Exclude<LLMProviderType, "jina" | "claude-code" | "codex">
+    > = ["openai", "gemini", "anthropic", "perplexity"];
+
+    for (const providerType of providerOrder) {
+      const apiKey = getApiKeyForProvider(providerType, apiKeys);
+      if (apiKey) {
+        try {
+          const provider = createCompletionProvider(providerType, apiKey);
+          return {
+            provider,
+            providerType,
+            isCLIFallback: false,
+          };
+        } catch {
+          // Try next provider
+        }
+      }
+    }
+  }
+
+  // Fallback to CLI
+  const cliAdapter = await createCLICompletionAdapter(projectPath, cliTimeout);
+  if (cliAdapter) {
+    return {
+      provider: cliAdapter,
+      providerType: "claude-code",
+      isCLIFallback: true,
+    };
+  }
+
+  throw new Error(
+    "No completion provider available. Configure API keys (OPENAI_API_KEY, GEMINI_API_KEY, ANTHROPIC_API_KEY, or PERPLEXITY_API_KEY) " +
+      "or install a CLI tool (npm install -g @anthropic-ai/claude-code)."
+  );
+}
+
+/** API providers that use API keys (excludes CLI and embedding-only providers) */
+type APIProviderType = Exclude<LLMProviderType, "jina" | "claude-code" | "codex">;
+
+/**
+ * Get API key for a specific provider from config
+ * @internal
+ */
+function getApiKeyForProvider(
+  type: APIProviderType,
+  config: ProviderFactoryConfig
+): string | undefined {
+  switch (type) {
+    case "openai":
+      return config.openaiApiKey;
+    case "gemini":
+      return config.geminiApiKey;
+    case "anthropic":
+      return config.anthropicApiKey;
+    case "perplexity":
+      return config.perplexityApiKey;
+    default: {
+      const exhaustiveCheck: never = type;
+      throw new Error(`Unknown provider type: ${exhaustiveCheck}`);
+    }
   }
 }

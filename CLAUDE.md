@@ -1,6 +1,6 @@
 # 🤖 Telegram Code Analyzer
 
-Minimalist tool for deep codebase analysis via Telegram bot using powerful Claude Code CLI capabilities. Follows KISS principles and Occam's razor for maximum simplicity and development efficiency.
+Minimalist tool for deep codebase analysis via Telegram bot using RAG (Retrieval-Augmented Generation) with multiple LLM providers. Follows KISS principles and Occam's razor for maximum simplicity and development efficiency.
 
 **ALWAYS RESPOND IN ENGLISH**
 
@@ -16,7 +16,7 @@ Minimalist tool for deep codebase analysis via Telegram bot using powerful Claud
 - **grammY ^1.37.0** - modern Telegram Bot framework (TypeScript-first)
 - **TypeScript ^5.9.2** - static typing for reliability
 - **Zod ^4.0.15** - runtime validation and type-safe schemas
-- **Claude Code CLI** - code analysis core with sub-agents
+- **LLM Providers** - OpenAI, Gemini, Anthropic, Perplexity, Jina for embeddings and completions
 - **dotenv ^17.2.1** - environment variables management
 - **tsx ^4.20.3** - TypeScript execution for development
 
@@ -31,10 +31,11 @@ Minimalist tool for deep codebase analysis via Telegram bot using powerful Claud
 
 ## 🎯 Core Project Features
 
-1. **Code Analysis** - deep analysis through Claude sub-agents
-2. **Telegram Interface** - natural communication with the bot
-3. **Simple Authorization** - whitelist access system
-4. **Structured Responses** - brief summary + detailed .md file
+1. **RAG Pipeline** - semantic code search with LLM reranking
+2. **Multi-LLM Support** - OpenAI, Gemini, Anthropic, Perplexity, Jina
+3. **Telegram Interface** - natural communication with the bot
+4. **Simple Authorization** - whitelist access system
+5. **Structured Responses** - brief summary + detailed .md file
 
 ## 📁 Project Structure
 
@@ -47,10 +48,17 @@ telegram-code-analyzer/
 │   ├── 📄 index.ts             # 🚀 Application entry point
 │   ├── 📄 bot.ts               # 🤖 Telegram bot + handlers
 │   ├── 📄 auth.ts              # 🔐 Whitelist authorization
-│   ├── 📄 claude.ts            # 🧠 Claude Code CLI integration
 │   ├── 📄 utils.ts             # 🛠️ Utilities (logging, config)
 │   ├── 📄 validation.ts        # 🔒 Input validation & security
 │   ├── 📄 types.ts             # 🏷️ TypeScript types
+│   ├── 📂 rag/                 # 🔍 RAG система
+│   │   ├── 📄 parser.ts        # AST парсер TypeScript
+│   │   ├── 📄 chunker.ts       # Семантическое разбиение
+│   │   ├── 📄 store.ts         # Векторное хранилище
+│   │   ├── 📄 retriever.ts     # Поиск + ранжирование
+│   │   └── 📄 pipeline.ts      # Оркестратор
+│   ├── 📂 llm/                 # 🤖 LLM провайдеры
+│   │   └── 📄 *.ts             # OpenAI, Gemini, Anthropic, Perplexity, Jina
 │   ├── 📂 errors/              # ❌ Error handling
 │   │   ├── 📄 index.ts         # Error handling & messages
 │   │   └── 📄 types.ts         # Error type definitions
@@ -58,12 +66,34 @@ telegram-code-analyzer/
 │       ├── 📄 setup.ts         # Test configuration
 │       ├── 📄 bot.integration.test.ts  # Bot tests
 │       └── 📄 integration.test.ts      # Integration tests
-├── 📂 temp/                    # 🗂️ Temporary .md responses
-└── 📂 prompts/                  # 📝 Prompts for Claude sub-agents
-    └── 📄 code-analyzer.md      # 🧠 Code analysis prompt
+└── 📂 temp/                    # 🗂️ Temporary .md responses
 ```
 
 > 📖 **Detailed Architecture**: Complete component structure in [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)
+
+## 🔍 RAG Pipeline
+
+Все запросы обрабатываются через RAG:
+
+`/ask <вопрос>` → Embedding → Vector Search → LLM Reranking → Answer
+
+| Компонент | Файл | Назначение |
+|-----------|------|-----------|
+| Parser | `rag/parser.ts` | AST парсинг TypeScript |
+| Chunker | `rag/chunker.ts` | Разбиение на чанки |
+| Store | `rag/store.ts` | Векторное хранилище |
+| Retriever | `rag/retriever.ts` | Поиск + ранжирование |
+| Pipeline | `rag/pipeline.ts` | Оркестратор |
+
+## 🤖 LLM Providers
+
+| Provider | Embeddings | Completions |
+|----------|-----------|-------------|
+| OpenAI | ✓ | ✓ |
+| Gemini | ✓ | ✓ |
+| Jina | ✓ | ✗ |
+| Anthropic | ✗ | ✓ |
+| Perplexity | ✗ | ✓ |
 
 ## ✅ Verification Checkpoints
 
@@ -176,11 +206,11 @@ tree -L 2 src/                             # Project structure
 
 ## 🌟 Key Project Features
 
-### Claude Code Integration
+### RAG System
 
-- **Sub-agents**: scanner, architect, general-purpose for specialized analysis
-- **Simple CLI**: direct claude-code-cli invocation via shell
-- **File output**: saving results to .md files
+- **Semantic search**: vector embeddings + LLM reranking
+- **Multi-provider**: OpenAI, Gemini, Jina for embeddings; Anthropic, Perplexity for completions
+- **AST parsing**: TypeScript-aware code chunking
 
 ### Telegram Bot Architecture
 
@@ -191,5 +221,6 @@ tree -L 2 src/                             # Project structure
 ### Minimal Persistence
 
 - **File system**: analysis results saved to temp/
+- **Vector store**: JSON persistence for RAG index
 - **Environment config**: all configuration via .env
 - **No database**: avoiding database complexity

@@ -54,6 +54,12 @@ vi.mock("../../rag/parser.js", () => ({
 
 vi.mock("../../rag/chunker.js", () => ({
   chunkCodebase: vi.fn(),
+  chunkDocumentSections: vi.fn(),
+}));
+
+vi.mock("../../rag/doc-parser.js", () => ({
+  findDocumentFiles: vi.fn().mockResolvedValue([]),
+  parseMarkdownFile: vi.fn(),
 }));
 
 vi.mock("../../rag/retriever.js", () => ({
@@ -102,7 +108,7 @@ function createMockMetadata(
     totalChunks: 10,
     totalTokens: 500,
     indexedAt: new Date().toISOString(),
-    version: "1.0.0",
+    version: "1.1.0", // Updated for ai-docs support
     ...overrides,
   };
 }
@@ -237,7 +243,7 @@ describe("RAGPipeline", () => {
       expect(metadata.projectPath).toBe("/project");
       expect(metadata.totalChunks).toBe(2);
       expect(metadata.totalTokens).toBe(250);
-      expect(metadata.version).toBe("1.0.0");
+      expect(metadata.version).toBe("1.1.0");
     });
 
     it("should throw error when no TypeScript files found", async () => {
@@ -292,6 +298,7 @@ describe("RAGPipeline", () => {
     });
 
     it("should clear store and return null on version mismatch", async () => {
+      const warnSpy = vi.spyOn(console, "warn");
       const outdatedMetadata = createMockMetadata({ version: "0.9.0" });
 
       vi.mocked(CodeVectorStore).exists = vi.fn().mockResolvedValue(true);
@@ -302,6 +309,10 @@ describe("RAGPipeline", () => {
 
       expect(mockStoreMethods.clear).toHaveBeenCalled();
       expect(result).toBeNull();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("version mismatch")
+      );
+      warnSpy.mockRestore();
     });
   });
 

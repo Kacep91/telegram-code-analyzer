@@ -185,6 +185,10 @@ describe("LLM Index Module", () => {
     it("should return false for claude-code", () => {
       expect(supportsEmbeddings("claude-code")).toBe(false);
     });
+
+    it("should return false for codex", () => {
+      expect(supportsEmbeddings("codex")).toBe(false);
+    });
   });
 
   // ===========================================================================
@@ -224,7 +228,13 @@ describe("LLM Index Module", () => {
 
     it("should throw error for claude-code type", () => {
       expect(() => createCompletionProvider("claude-code", testApiKey)).toThrow(
-        "claude-code provider must be created directly, not through factory"
+        "claude-code is a CLI provider and must be created via createCLICompletionAdapter, not through factory"
+      );
+    });
+
+    it("should throw error for codex type", () => {
+      expect(() => createCompletionProvider("codex", testApiKey)).toThrow(
+        "codex is a CLI provider and must be created via createCLICompletionAdapter, not through factory"
       );
     });
   });
@@ -267,6 +277,12 @@ describe("LLM Index Module", () => {
         "claude-code does not support embeddings. Use OpenAI, Gemini, or Jina instead."
       );
     });
+
+    it("should throw error for codex type", () => {
+      expect(() => createEmbeddingProvider("codex", testApiKey)).toThrow(
+        "codex does not support embeddings. Use OpenAI, Gemini, or Jina instead."
+      );
+    });
   });
 
   // ===========================================================================
@@ -305,6 +321,12 @@ describe("LLM Index Module", () => {
     it("should throw error for claude-code type", () => {
       expect(() => createFullProvider("claude-code", testApiKey)).toThrow(
         "claude-code does not support embeddings. Use OpenAI or Gemini for full provider."
+      );
+    });
+
+    it("should throw error for codex type", () => {
+      expect(() => createFullProvider("codex", testApiKey)).toThrow(
+        "codex does not support embeddings. Use OpenAI or Gemini for full provider."
       );
     });
   });
@@ -451,7 +473,16 @@ describe("LLM Index Module", () => {
 
       expect(result.available).toBe(false);
       expect(result.error).toBe(
-        "claude-code provider availability check not supported via factory"
+        "claude-code is a CLI provider - use checkCLIAvailability instead"
+      );
+    });
+
+    it("should return false for codex provider", async () => {
+      const result = await checkProviderAvailability("codex", testApiKey);
+
+      expect(result.available).toBe(false);
+      expect(result.error).toBe(
+        "codex is a CLI provider - use checkCLIAvailability instead"
       );
     });
 
@@ -532,5 +563,134 @@ describe("LLM Index Module", () => {
         expect(embeddingProvider).toBe("openai");
       }
     });
+  });
+});
+
+// =============================================================================
+// getCompletionProviderWithFallback Tests (separate describe block)
+// =============================================================================
+
+// Mock for CLI adapter
+const mockCreateCLICompletionAdapter = vi.fn();
+
+vi.mock("../../llm/cli-adapter.js", () => ({
+  createCLICompletionAdapter: (...args: unknown[]) =>
+    mockCreateCLICompletionAdapter(...args),
+  CLICompletionAdapter: vi.fn(),
+  checkCLIAvailability: vi.fn(),
+}));
+
+// Re-import to get the mocked version
+import { getCompletionProviderWithFallback } from "../../llm/index.js";
+
+describe("getCompletionProviderWithFallback", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCreateCLICompletionAdapter.mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("should return preferred provider when API key is available", async () => {
+    const result = await getCompletionProviderWithFallback({
+      apiKeys: { openaiApiKey: "sk-test-key" },
+      preferredProvider: "openai",
+    });
+
+    expect(result.providerType).toBe("openai");
+    expect(result.isCLIFallback).toBe(false);
+    expect(result.provider).toBeDefined();
+  });
+
+  it("should return first available API provider when preferred is not available", async () => {
+    const result = await getCompletionProviderWithFallback({
+      apiKeys: { geminiApiKey: "gemini-key" },
+      preferredProvider: "openai",
+    });
+
+    expect(result.providerType).toBe("gemini");
+    expect(result.isCLIFallback).toBe(false);
+  });
+
+  it("should follow priority order: openai > gemini > anthropic > perplexity", async () => {
+    // Only anthropic key available
+    const result = await getCompletionProviderWithFallback({
+      apiKeys: { anthropicApiKey: "anthropic-key" },
+    });
+
+    expect(result.providerType).toBe("anthropic");
+    expect(result.isCLIFallback).toBe(false);
+  });
+
+  it("should fallback to CLI when no API keys available", async () => {
+    const mockCLIAdapter = {
+      name: "claude-code" as const,
+      complete: vi.fn(),
+      checkAvailability: vi.fn(),
+    };
+    mockCreateCLICompletionAdapter.mockResolvedValue(mockCLIAdapter);
+
+    const result = await getCompletionProviderWithFallback({});
+
+    expect(result.providerType).toBe("claude-code");
+    expect(result.isCLIFallback).toBe(true);
+    expect(mockCreateCLICompletionAdapter).toHaveBeenCalled();
+  });
+
+  it("should pass projectPath and cliTimeout to CLI adapter", async () => {
+    const mockCLIAdapter = {
+      name: "claude-code" as const,
+      complete: vi.fn(),
+      checkAvailability: vi.fn(),
+    };
+    mockCreateCLICompletionAdapter.mockResolvedValue(mockCLIAdapter);
+
+    await getCompletionProviderWithFallback({
+      projectPath: "/test/project",
+      cliTimeout: 60000,
+    });
+
+    expect(mockCreateCLICompletionAdapter).toHaveBeenCalledWith(
+      "/test/project",
+      60000
+    );
+  });
+
+  it("should throw error when no provider is available", async () => {
+    mockCreateCLICompletionAdapter.mockResolvedValue(null);
+
+    await expect(getCompletionProviderWithFallback({})).rejects.toThrow(
+      "No completion provider available"
+    );
+  });
+
+  it("should handle empty config", async () => {
+    const mockCLIAdapter = {
+      name: "claude-code" as const,
+      complete: vi.fn(),
+      checkAvailability: vi.fn(),
+    };
+    mockCreateCLICompletionAdapter.mockResolvedValue(mockCLIAdapter);
+
+    const result = await getCompletionProviderWithFallback();
+
+    expect(result.isCLIFallback).toBe(true);
+  });
+
+  it("should try next provider if creation fails", async () => {
+    // Setup: OpenAI will fail (constructor throws), Gemini should work
+    openAIConstructorError.value = new Error("OpenAI init failed");
+
+    const result = await getCompletionProviderWithFallback({
+      apiKeys: {
+        openaiApiKey: "sk-failing-key",
+        geminiApiKey: "gemini-working-key",
+      },
+    });
+
+    expect(result.providerType).toBe("gemini");
+    expect(result.isCLIFallback).toBe(false);
   });
 });

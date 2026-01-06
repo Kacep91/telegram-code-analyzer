@@ -11,8 +11,18 @@ export const LLMProviderTypeSchema = z.enum([
   "perplexity",
   "jina",
   "claude-code",
+  "codex",
 ]);
 export type LLMProviderType = z.infer<typeof LLMProviderTypeSchema>;
+
+/** CLI-based provider types (not API-based) */
+export const CLI_PROVIDER_TYPES = ["claude-code", "codex"] as const;
+export type CLIProviderType = (typeof CLI_PROVIDER_TYPES)[number];
+
+/** Check if provider type is a CLI tool (not API-based) */
+export function isCLIProvider(type: LLMProviderType): type is CLIProviderType {
+  return CLI_PROVIDER_TYPES.includes(type as CLIProviderType);
+}
 
 // =============================================================================
 // Model Configuration
