@@ -215,6 +215,7 @@ export function createBot(): Bot {
 
   // ==========================================================================
   // /index command - Index codebase for RAG (admin only)
+  // Supports incremental indexing by default, use --full for full reindex
   // ==========================================================================
   bot.command("index", async (ctx) => {
     // Admin-only command
@@ -229,6 +230,19 @@ export function createBot(): Bot {
       await ctx.reply("⏳ Indexing already in progress. Please wait.");
       return;
     }
+
+    // Check for --full flag
+    const args = ctx.match?.toString().trim() ?? "";
+    if (args && args !== "--full") {
+      await ctx.reply(
+        "⚠️ Unknown option: " + args + "\n\n" +
+        "Usage: /index [--full]\n" +
+        "• /index — incremental indexing (default)\n" +
+        "• /index --full — force complete reindex"
+      );
+      return;
+    }
+    const forceFullIndex = args === "--full";
 
     const factoryConfig = toProviderFactoryConfig(config.llmApiKeys);
     const availableProviders = getAvailableProviders(factoryConfig);
@@ -247,7 +261,6 @@ export function createBot(): Bot {
     }
 
     indexingInProgress = true;
-    await ctx.reply("📚 Starting codebase indexing... This may take a while.");
 
     try {
       const pipeline = await ensureRagPipeline(config);
@@ -256,19 +269,63 @@ export function createBot(): Bot {
         config.defaultEmbeddingProvider
       );
 
-      const metadata = await pipeline.index(
-        config.projectPath,
-        embeddingProvider,
-        config.ragStorePath
-      );
+      const status = pipeline.getStatus();
+      const hasManifest = pipeline.hasManifest();
+      // Incremental indexing requires: existing index + manifest for change tracking + no --full flag
+      const canDoIncremental = status.indexed && hasManifest && !forceFullIndex;
 
-      await ctx.reply(
-        `✅ <b>Indexing complete!</b>\n\n` +
-          `📊 ${metadata.totalChunks} chunks\n` +
-          `📝 ${metadata.totalTokens} tokens\n` +
-          `📁 Project: ${metadata.projectPath}`,
-        { parse_mode: "HTML" }
-      );
+      if (canDoIncremental) {
+        // Incremental indexing
+        await ctx.reply("📚 Starting incremental indexing...");
+
+        const result = await pipeline.indexIncremental(
+          config.projectPath,
+          embeddingProvider,
+          config.ragStorePath
+        );
+
+        const { stats } = result;
+        const hasChanges = stats.added > 0 || stats.modified > 0 || stats.deleted > 0;
+
+        if (hasChanges) {
+          await ctx.reply(
+            `✅ <b>Incremental indexing complete!</b>\n\n` +
+              `📊 Total: ${result.metadata.totalChunks} chunks\n` +
+              `➕ Added: ${stats.added} files\n` +
+              `✏️ Modified: ${stats.modified} files\n` +
+              `🗑️ Deleted: ${stats.deleted} files\n` +
+              `⏭️ Unchanged: ${stats.unchanged} files`,
+            { parse_mode: "HTML" }
+          );
+        } else {
+          await ctx.reply(
+            `✅ <b>No changes detected</b>\n\n` +
+              `📊 Index is up to date (${result.metadata.totalChunks} chunks)\n` +
+              `⏭️ Files checked: ${stats.unchanged}`,
+            { parse_mode: "HTML" }
+          );
+        }
+      } else {
+        // Full indexing
+        const reason = forceFullIndex
+          ? "(forced)"
+          : "(first time or index needs rebuild)";
+        await ctx.reply(`📚 Starting full indexing ${reason}... This may take a while.`);
+
+        const metadata = await pipeline.index(
+          config.projectPath,
+          embeddingProvider,
+          config.ragStorePath
+        );
+
+        await ctx.reply(
+          `✅ <b>Full indexing complete!</b>\n\n` +
+            `📊 ${metadata.totalChunks} chunks\n` +
+            `📝 ${metadata.totalTokens} tokens\n` +
+            `📁 Project: ${metadata.projectPath}`,
+          { parse_mode: "HTML" }
+        );
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
       logger.error("Indexing failed:", sanitizeErrorMessage(String(error)));

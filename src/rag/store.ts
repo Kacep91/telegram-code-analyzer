@@ -1,10 +1,14 @@
 import { readFile, writeFile, mkdir, access } from "fs/promises";
 import { dirname } from "path";
-import type { CodeChunk, ChunkMetadata, SearchResult } from "./types.js";
+import type { CodeChunk, ChunkMetadata, SearchResult, FileManifest } from "./types.js";
 import {
   validatePathWithinBase,
   getAllowedBasePath,
 } from "../cli/path-validator.js";
+import { logger } from "../utils.js";
+
+/** Threshold for detecting zero/near-zero vectors during normalization */
+const ZERO_VECTOR_THRESHOLD = 1e-10;
 
 /** Stored chunk with embedding */
 interface StoredChunk {
@@ -17,6 +21,7 @@ interface SerializedStore {
   readonly metadata: ChunkMetadata;
   readonly chunks: readonly StoredChunk[];
   readonly embeddingDimension: number;
+  readonly manifest?: FileManifest;
 }
 
 /**
@@ -30,6 +35,8 @@ export class CodeVectorStore {
   private chunkIdIndex: Map<string, number> = new Map();
   private metadata: ChunkMetadata | null = null;
   private embeddingDimension: number = 0;
+  private filePathIndex: Map<string, Set<string>> = new Map();
+  private manifest: FileManifest | null = null;
 
   /**
    * Add chunks with their embeddings
@@ -58,13 +65,31 @@ export class CodeVectorStore {
       throw new Error("Embedding dimension cannot be 0");
     }
 
-    // Validate or set embedding dimension
-    if (this.embeddingDimension === 0) {
-      this.embeddingDimension = dim;
-    } else if (dim !== this.embeddingDimension) {
+    // Determine expected dimension for validation
+    const expectedDimension = this.embeddingDimension === 0 ? dim : this.embeddingDimension;
+
+    // Validate dimension mismatch with existing store
+    if (this.embeddingDimension !== 0 && dim !== this.embeddingDimension) {
       throw new Error(
         `Embedding dimension mismatch: expected ${this.embeddingDimension}, got ${dim}`
       );
+    }
+
+    // Phase 1: Validate ALL embeddings BEFORE modifying state
+    for (let i = 0; i < embeddings.length; i++) {
+      const embedding = embeddings[i];
+      if (!embedding) continue;
+
+      if (embedding.length !== expectedDimension) {
+        throw new Error(
+          `Embedding at index ${i} has wrong dimension: expected ${expectedDimension}, got ${embedding.length}`
+        );
+      }
+    }
+
+    // Phase 2: Now safe to set dimension and add chunks
+    if (this.embeddingDimension === 0) {
+      this.embeddingDimension = dim;
     }
 
     // Normalize and store
@@ -74,11 +99,10 @@ export class CodeVectorStore {
 
       if (!chunk || !embedding) continue;
 
-      // Validate embedding dimension for each vector
-      if (embedding.length !== this.embeddingDimension) {
-        throw new Error(
-          `Embedding at index ${i} has wrong dimension: expected ${this.embeddingDimension}, got ${embedding.length}`
-        );
+      // Check for duplicate chunk ID
+      if (this.chunkIdIndex.has(chunk.id)) {
+        logger.warn(`[VectorStore] Duplicate chunk ID ignored: ${chunk.id}`);
+        continue;
       }
 
       const normalized = this.normalizeVector(embedding);
@@ -86,6 +110,12 @@ export class CodeVectorStore {
 
       this.chunks.push({ chunk, embedding: normalized });
       this.chunkIdIndex.set(chunk.id, index);
+
+      // Update filePathIndex
+      if (!this.filePathIndex.has(chunk.filePath)) {
+        this.filePathIndex.set(chunk.filePath, new Set());
+      }
+      this.filePathIndex.get(chunk.filePath)!.add(chunk.id);
     }
   }
 
@@ -161,6 +191,23 @@ export class CodeVectorStore {
     const idsToRemove = new Set(ids);
     const originalLength = this.chunks.length;
 
+    // Remove from filePathIndex
+    for (const id of idsToRemove) {
+      const index = this.chunkIdIndex.get(id);
+      if (index !== undefined) {
+        const chunk = this.chunks[index]?.chunk;
+        if (chunk) {
+          const fileChunks = this.filePathIndex.get(chunk.filePath);
+          if (fileChunks) {
+            fileChunks.delete(id);
+            if (fileChunks.size === 0) {
+              this.filePathIndex.delete(chunk.filePath);
+            }
+          }
+        }
+      }
+    }
+
     // Filter out chunks to remove
     this.chunks = this.chunks.filter(
       (stored) => !idsToRemove.has(stored.chunk.id)
@@ -201,6 +248,31 @@ export class CodeVectorStore {
   }
 
   /**
+   * Set file manifest for incremental indexing
+   */
+  setManifest(manifest: FileManifest): void {
+    this.manifest = manifest;
+  }
+
+  /**
+   * Get file manifest
+   */
+  getManifest(): FileManifest | null {
+    return this.manifest;
+  }
+
+  /**
+   * Remove all chunks belonging to a specific file
+   * @param filePath - Path of the file whose chunks should be removed
+   * @returns Number of chunks removed
+   */
+  removeChunksByFile(filePath: string): number {
+    const chunkIds = this.getChunkIdsByFile(filePath);
+    if (chunkIds.length === 0) return 0;
+    return this.removeChunks(chunkIds);
+  }
+
+  /**
    * Get chunk count
    */
   size(): number {
@@ -222,13 +294,25 @@ export class CodeVectorStore {
   }
 
   /**
+   * Get all chunk IDs for a specific file
+   * @param filePath - Path of the file
+   * @returns Array of chunk IDs belonging to this file
+   */
+  getChunkIdsByFile(filePath: string): readonly string[] {
+    const ids = this.filePathIndex.get(filePath);
+    return ids ? [...ids] : [];
+  }
+
+  /**
    * Clear all chunks
    */
   clear(): void {
     this.chunks = [];
     this.chunkIdIndex.clear();
+    this.filePathIndex.clear();
     this.metadata = null;
     this.embeddingDimension = 0;
+    this.manifest = null;
   }
 
   /**
@@ -250,6 +334,7 @@ export class CodeVectorStore {
       metadata: this.metadata,
       chunks: this.chunks,
       embeddingDimension: this.embeddingDimension,
+      ...(this.manifest && { manifest: this.manifest }),
     };
 
     await mkdir(dirname(path), { recursive: true });
@@ -285,13 +370,22 @@ export class CodeVectorStore {
       embedding: c.embedding,
     }));
     this.embeddingDimension = parsed.embeddingDimension;
+    this.manifest = parsed.manifest ?? null;
 
-    // Rebuild index
+    // Rebuild chunkIdIndex and filePathIndex
     this.chunkIdIndex.clear();
+    this.filePathIndex.clear();
     for (let i = 0; i < this.chunks.length; i++) {
       const stored = this.chunks[i];
       if (stored) {
         this.chunkIdIndex.set(stored.chunk.id, i);
+
+        // Rebuild filePathIndex
+        const filePath = stored.chunk.filePath;
+        if (!this.filePathIndex.has(filePath)) {
+          this.filePathIndex.set(filePath, new Set());
+        }
+        this.filePathIndex.get(filePath)!.add(stored.chunk.id);
       }
     }
   }
@@ -331,6 +425,15 @@ export class CodeVectorStore {
     if (typeof meta["indexedAt"] !== "string") return false;
     if (typeof meta["version"] !== "string") return false;
 
+    // Validate manifest if present (optional for backward compatibility)
+    if (obj["manifest"] !== undefined) {
+      const manifest = obj["manifest"];
+      if (typeof manifest !== "object" || manifest === null) return false;
+      const m = manifest as Record<string, unknown>;
+      if (typeof m["files"] !== "object" || m["files"] === null) return false;
+      if (typeof m["version"] !== "string") return false;
+    }
+
     return true;
   }
 
@@ -349,10 +452,8 @@ export class CodeVectorStore {
 
     // Zero or near-zero vectors cannot be normalized meaningfully
     // Return zero vector of same dimension - will result in 0 similarity score
-    if (magnitude < 1e-10) {
-      console.warn(
-        "[VectorStore] Attempted to normalize zero/near-zero vector"
-      );
+    if (magnitude < ZERO_VECTOR_THRESHOLD) {
+      logger.warn("[VectorStore] Attempted to normalize zero/near-zero vector");
       return vec.map(() => 0);
     }
 

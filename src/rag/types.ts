@@ -94,3 +94,68 @@ export interface RAGQueryResult {
   readonly sources: readonly SearchResult[];
   readonly tokenCount: number;
 }
+
+// ============================================================================
+// Incremental Indexing Types
+// ============================================================================
+
+/** File entry in manifest for incremental indexing */
+export interface FileEntry {
+  /** SHA256 hash of file content */
+  readonly contentHash: string;
+  /** Chunk IDs generated from this file */
+  readonly chunkIds: readonly string[];
+  /** File modification time in ms (for quick pre-check) */
+  readonly mtime: number;
+}
+
+/** Manifest tracking files and their chunks for incremental indexing */
+export interface FileManifest {
+  /** Map: filePath → FileEntry */
+  readonly files: Readonly<Record<string, FileEntry>>;
+  /** Manifest version for compatibility */
+  readonly version: string;
+}
+
+// ============================================================================
+// Zod Schemas for Disk Persistence Validation
+// ============================================================================
+
+/** Zod schema for FileEntry validation when loading from disk */
+export const FileEntrySchema = z.object({
+  contentHash: z.string(),
+  chunkIds: z.array(z.string()).readonly(),
+  mtime: z.number(),
+});
+
+/** Zod schema for FileManifest validation when loading from disk */
+export const FileManifestSchema = z.object({
+  files: z.record(z.string(), FileEntrySchema),
+  version: z.string(),
+});
+
+/** Result of incremental indexing */
+export interface IncrementalIndexResult {
+  readonly metadata: ChunkMetadata;
+  readonly stats: {
+    readonly added: number;
+    readonly modified: number;
+    readonly deleted: number;
+    readonly unchanged: number;
+  };
+}
+
+/** Detected file changes for incremental indexing */
+export interface FileChanges {
+  /** New files to index */
+  readonly added: readonly string[];
+  /** Modified files (content hash changed) */
+  readonly modified: readonly string[];
+  /** Deleted files (in manifest but not on disk) */
+  readonly deleted: readonly string[];
+  /** Unchanged files */
+  readonly unchanged: readonly string[];
+}
+
+/** Manifest version for incremental indexing compatibility */
+export const MANIFEST_VERSION = "1.0.0";

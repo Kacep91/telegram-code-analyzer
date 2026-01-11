@@ -9,6 +9,37 @@ import { LLMError, LLMErrorSubType } from "../errors/index.js";
 const JINA_BASE_URL = "https://api.jina.ai/v1";
 const DEFAULT_MODEL = "jina-embeddings-v3";
 const DEFAULT_TIMEOUT = 60000;
+const MAX_RETRIES = 3;
+const INITIAL_DELAY_MS = 1000;
+
+/**
+ * Fetch with retry logic for network resilience
+ * Uses exponential backoff: 1s → 2s → 4s
+ */
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  retries: number = MAX_RETRIES
+): Promise<Response> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      return await fetch(url, options);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+
+      // Don't wait after last attempt
+      if (attempt < retries - 1) {
+        const delay = INITIAL_DELAY_MS * Math.pow(2, attempt);
+        console.log(`[Jina] Retry ${attempt + 1}/${retries - 1} after ${delay}ms...`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  throw lastError ?? new Error("fetch failed after retries");
+}
 
 /**
  * Schema for Jina embedding response
@@ -93,7 +124,7 @@ export class JinaEmbeddingProvider implements LLMEmbeddingProvider {
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
     try {
-      const response = await fetch(`${JINA_BASE_URL}/embeddings`, {
+      const response = await fetchWithRetry(`${JINA_BASE_URL}/embeddings`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
