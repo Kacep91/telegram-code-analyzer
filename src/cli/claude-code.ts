@@ -4,7 +4,7 @@
 import { spawn } from "child_process";
 import { stat, readFile } from "fs/promises";
 import { join, basename } from "path";
-import type { CLITool, CLIToolResult } from "./types.js";
+import type { CLITool, CLIToolResult, CLIExecuteOptions } from "./types.js";
 import type { AnalysisResult } from "../types.js";
 import {
   ClaudeError,
@@ -124,32 +124,39 @@ export class ClaudeCodeCLI implements CLITool {
   async execute(
     projectPath: string,
     prompt: string,
-    timeout: number = DEFAULT_TIMEOUT_MS
+    options?: CLIExecuteOptions
   ): Promise<CLIToolResult> {
+    const timeout = options?.timeout ?? DEFAULT_TIMEOUT_MS;
+    const model = options?.model;
+
     // Validate path is within allowed base directory (security check)
     await validateProjectPath(projectPath);
 
     const startTime = Date.now();
     const command = await this.findClaudeCommand();
 
+    // Build CLI arguments
+    const args = [
+      "--print",
+      "-p",
+      "-",
+      "--output-format",
+      "text",
+      "--dangerously-skip-permissions",
+      "--permission-mode",
+      "bypassPermissions",
+    ];
+
+    // Add model flag if specified
+    if (model) {
+      args.push("--model", model);
+    }
+
     return new Promise((resolve, reject) => {
-      const childProcess = spawn(
-        command,
-        [
-          "--print",
-          "-p",
-          "-",
-          "--output-format",
-          "text",
-          "--dangerously-skip-permissions",
-          "--permission-mode",
-          "bypassPermissions",
-        ],
-        {
-          cwd: projectPath,
-          stdio: ["pipe", "pipe", "pipe"],
-        }
-      );
+      const childProcess = spawn(command, args, {
+        cwd: projectPath,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
 
       let stdout = "";
       let stderr = "";
@@ -265,7 +272,7 @@ export async function executeClaudeAnalysis(
     const fullPrompt = `${promptTemplate}\n\nUSER QUESTION:\n\n${question}`;
 
     const cli = new ClaudeCodeCLI();
-    const result = await cli.execute(projectPath, fullPrompt, timeout);
+    const result = await cli.execute(projectPath, fullPrompt, { timeout });
 
     const duration = Date.now() - startTime;
     console.log(`Analysis completed in ${duration}ms`);

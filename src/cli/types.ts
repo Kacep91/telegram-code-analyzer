@@ -12,6 +12,12 @@ export interface CLIToolResult {
   readonly durationMs: number;
 }
 
+/** Options for CLI tool execution */
+export interface CLIExecuteOptions {
+  readonly timeout?: number | undefined;
+  readonly model?: string | undefined;
+}
+
 // CLI tool interface
 export interface CLITool {
   readonly name: CLIToolType;
@@ -21,7 +27,7 @@ export interface CLITool {
   execute(
     projectPath: string,
     prompt: string,
-    timeout?: number
+    options?: CLIExecuteOptions
   ): Promise<CLIToolResult>;
 }
 

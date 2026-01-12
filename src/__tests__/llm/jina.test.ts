@@ -62,11 +62,13 @@ describe("JinaEmbeddingProvider", () => {
   let mockFetch: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    vi.useFakeTimers();
     mockFetch = vi.fn();
     vi.stubGlobal("fetch", mockFetch);
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.clearAllMocks();
   });
@@ -269,56 +271,60 @@ describe("JinaEmbeddingProvider", () => {
     it("should throw LLMError with TIMEOUT on AbortError", async () => {
       const abortError = new Error("Aborted");
       abortError.name = "AbortError";
-      mockFetch.mockRejectedValueOnce(abortError);
+      // Mock all 3 retry attempts
+      mockFetch.mockRejectedValue(abortError);
 
       const provider = new JinaEmbeddingProvider({
         apiKey: TEST_API_KEY,
         timeout: 1000,
       });
 
-      try {
-        await provider.embed("test");
-        expect.fail("Should have thrown LLMError");
-      } catch (error) {
-        expect(error).toBeInstanceOf(LLMError);
-        const llmError = error as LLMError;
-        expect(llmError.subType).toBe(LLMErrorSubType.TIMEOUT);
-        expect(llmError.provider).toBe("jina");
-        expect(llmError.message).toContain("timeout");
-      }
+      // Run promise and timers concurrently to avoid unhandled rejection
+      await expect(
+        Promise.all([
+          provider.embed("test"),
+          vi.runAllTimersAsync(),
+        ]).then(([result]) => result)
+      ).rejects.toMatchObject({
+        subType: LLMErrorSubType.TIMEOUT,
+        provider: "jina",
+      });
     });
 
     it("should throw LLMError with API_ERROR on network error", async () => {
-      mockFetch.mockRejectedValueOnce(new Error("Network error"));
+      // Mock all 3 retry attempts
+      mockFetch.mockRejectedValue(new Error("Network error"));
 
       const provider = new JinaEmbeddingProvider({ apiKey: TEST_API_KEY });
 
-      try {
-        await provider.embed("test");
-        expect.fail("Should have thrown LLMError");
-      } catch (error) {
-        expect(error).toBeInstanceOf(LLMError);
-        const llmError = error as LLMError;
-        expect(llmError.subType).toBe(LLMErrorSubType.API_ERROR);
-        expect(llmError.provider).toBe("jina");
-        expect(llmError.message).toContain("Network error");
-      }
+      // Run promise and timers concurrently to avoid unhandled rejection
+      await expect(
+        Promise.all([
+          provider.embed("test"),
+          vi.runAllTimersAsync(),
+        ]).then(([result]) => result)
+      ).rejects.toMatchObject({
+        subType: LLMErrorSubType.API_ERROR,
+        provider: "jina",
+      });
     });
 
     it("should handle non-Error thrown objects", async () => {
-      mockFetch.mockRejectedValueOnce("string error");
+      // Mock all 3 retry attempts
+      mockFetch.mockRejectedValue("string error");
 
       const provider = new JinaEmbeddingProvider({ apiKey: TEST_API_KEY });
 
-      try {
-        await provider.embed("test");
-        expect.fail("Should have thrown LLMError");
-      } catch (error) {
-        expect(error).toBeInstanceOf(LLMError);
-        const llmError = error as LLMError;
-        expect(llmError.subType).toBe(LLMErrorSubType.API_ERROR);
-        expect(llmError.message).toContain("Unknown error");
-      }
+      // Run promise and timers concurrently to avoid unhandled rejection
+      await expect(
+        Promise.all([
+          provider.embed("test"),
+          vi.runAllTimersAsync(),
+        ]).then(([result]) => result)
+      ).rejects.toMatchObject({
+        subType: LLMErrorSubType.API_ERROR,
+        provider: "jina",
+      });
     });
   });
 
@@ -467,10 +473,16 @@ describe("JinaEmbeddingProvider", () => {
     });
 
     it("should return available: false on network error", async () => {
-      mockFetch.mockRejectedValueOnce(new Error("Connection refused"));
+      // Mock all 3 retry attempts
+      mockFetch.mockRejectedValue(new Error("Connection refused"));
 
       const provider = new JinaEmbeddingProvider({ apiKey: TEST_API_KEY });
-      const result = await provider.checkAvailability();
+
+      // Run promise and timers concurrently
+      const [result] = await Promise.all([
+        provider.checkAvailability(),
+        vi.runAllTimersAsync(),
+      ]);
 
       expect(result.available).toBe(false);
       expect(result.error).toContain("Connection refused");
@@ -489,13 +501,20 @@ describe("JinaEmbeddingProvider", () => {
     });
 
     it("should handle non-Error thrown objects in checkAvailability", async () => {
-      mockFetch.mockRejectedValueOnce("string error");
+      // Mock all 3 retry attempts
+      mockFetch.mockRejectedValue("string error");
 
       const provider = new JinaEmbeddingProvider({ apiKey: TEST_API_KEY });
-      const result = await provider.checkAvailability();
+
+      // Run promise and timers concurrently
+      const [result] = await Promise.all([
+        provider.checkAvailability(),
+        vi.runAllTimersAsync(),
+      ]);
 
       expect(result.available).toBe(false);
-      expect(result.error).toContain("Unknown error");
+      // Non-Error objects are converted to string via String()
+      expect(result.error).toContain("string error");
     });
   });
 

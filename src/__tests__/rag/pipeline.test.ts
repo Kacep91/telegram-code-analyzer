@@ -17,12 +17,15 @@ const mockStoreMethods = vi.hoisted(() => ({
   addChunks: vi.fn(),
   setMetadata: vi.fn(),
   getMetadata: vi.fn().mockReturnValue(null),
+  setManifest: vi.fn(),
+  getManifest: vi.fn().mockReturnValue(null),
   save: vi.fn().mockResolvedValue(undefined),
   load: vi.fn().mockResolvedValue(undefined),
   isEmpty: vi.fn().mockReturnValue(true),
   size: vi.fn().mockReturnValue(0),
   search: vi.fn().mockReturnValue([]),
   getAllChunks: vi.fn().mockReturnValue([]),
+  removeChunksByFile: vi.fn(),
 }));
 
 // Mock dependencies before importing RAGPipeline
@@ -33,12 +36,15 @@ vi.mock("../../rag/store.js", () => {
     addChunks = mockStoreMethods.addChunks;
     setMetadata = mockStoreMethods.setMetadata;
     getMetadata = mockStoreMethods.getMetadata;
+    setManifest = mockStoreMethods.setManifest;
+    getManifest = mockStoreMethods.getManifest;
     save = mockStoreMethods.save;
     load = mockStoreMethods.load;
     isEmpty = mockStoreMethods.isEmpty;
     size = mockStoreMethods.size;
     search = mockStoreMethods.search;
     getAllChunks = mockStoreMethods.getAllChunks;
+    removeChunksByFile = mockStoreMethods.removeChunksByFile;
 
     static exists = vi.fn().mockResolvedValue(false);
   }
@@ -50,11 +56,13 @@ vi.mock("../../rag/store.js", () => {
 
 vi.mock("../../rag/parser.js", () => ({
   findTypeScriptFiles: vi.fn(),
+  parseTypeScriptFile: vi.fn(),
 }));
 
 vi.mock("../../rag/chunker.js", () => ({
   chunkCodebase: vi.fn(),
   chunkDocumentSections: vi.fn(),
+  chunkEntities: vi.fn(),
 }));
 
 vi.mock("../../rag/doc-parser.js", () => ({
@@ -424,6 +432,163 @@ describe("RAGPipeline", () => {
       pipeline.clear();
 
       expect(mockStoreMethods.clear).toHaveBeenCalled();
+    });
+  });
+
+  describe("hasManifest", () => {
+    it("должен вернуть false когда manifest не существует", () => {
+      // ARRANGE
+      mockStoreMethods.getManifest.mockReturnValue(null);
+
+      // ACT
+      const pipeline = new RAGPipeline();
+      const hasManifest = pipeline.hasManifest();
+
+      // ASSERT
+      expect(hasManifest).toBe(false);
+      expect(mockStoreMethods.getManifest).toHaveBeenCalled();
+    });
+
+    it("должен вернуть true после полного индексирования", async () => {
+      // ARRANGE
+      const mockFiles = ["/project/src/test.ts"];
+      const mockChunks = [createMockChunk({ id: "chunk-1" })];
+      const mockManifest = {
+        files: {
+          "/project/src/test.ts": {
+            contentHash: "abc123",
+            chunkIds: ["chunk-1"],
+            mtime: 1234567890,
+          },
+        },
+        version: "1.0.0",
+      };
+
+      vi.mocked(findTypeScriptFiles).mockResolvedValue(mockFiles);
+      vi.mocked(chunkCodebase).mockResolvedValue(mockChunks);
+
+      // Делаем так, чтобы после index() manifest был установлен
+      mockStoreMethods.getManifest.mockReturnValue(mockManifest);
+
+      // ACT
+      const pipeline = new RAGPipeline();
+      await pipeline.index("/project", mockEmbeddingProvider);
+
+      const hasManifest = pipeline.hasManifest();
+
+      // ASSERT
+      expect(hasManifest).toBe(true);
+    });
+  });
+
+  describe("indexIncremental", () => {
+    it("должен вызвать полное переиндексирование при несовпадении версии manifest", async () => {
+      // ARRANGE
+      const mockFiles = ["/project/src/test.ts"];
+      const mockChunks = [createMockChunk()];
+      const outdatedManifest = {
+        files: {},
+        version: "0.9.0", // Старая версия
+      };
+
+      vi.mocked(findTypeScriptFiles).mockResolvedValue(mockFiles);
+      vi.mocked(chunkCodebase).mockResolvedValue(mockChunks);
+      mockStoreMethods.getManifest.mockReturnValue(outdatedManifest);
+
+      const logSpy = vi.spyOn(console, "log");
+
+      // ACT
+      const pipeline = new RAGPipeline();
+      const result = await pipeline.indexIncremental(
+        "/project",
+        mockEmbeddingProvider
+      );
+
+      // ASSERT
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Manifest version mismatch")
+      );
+      expect(mockStoreMethods.clear).toHaveBeenCalled();
+      // При fallback к полному индексированию stats все нули
+      expect(result.stats.added).toBe(0);
+      expect(result.stats.modified).toBe(0);
+      expect(result.stats.deleted).toBe(0);
+      expect(result.stats.unchanged).toBe(0);
+
+      logSpy.mockRestore();
+    });
+
+    it("должен вызвать indexIncremental и вернуть структуру с metadata и stats", async () => {
+      // ARRANGE - симулируем сценарий с существующим manifest
+      const mockFiles = ["/project/src/test.ts"];
+      const mockManifest = {
+        files: {
+          "/project/src/test.ts": {
+            contentHash: "abc123",
+            chunkIds: ["chunk-1"],
+            mtime: 1234567890,
+          },
+        },
+        version: "1.0.0",
+      };
+      const mockMetadata = createMockMetadata({ totalChunks: 1 });
+
+      vi.mocked(findTypeScriptFiles).mockResolvedValue(mockFiles);
+      mockStoreMethods.getManifest.mockReturnValue(mockManifest);
+      mockStoreMethods.getMetadata.mockReturnValue(mockMetadata);
+
+      // ACT
+      const pipeline = new RAGPipeline();
+      const result = await pipeline.indexIncremental(
+        "/project",
+        mockEmbeddingProvider
+      );
+
+      // ASSERT - проверяем что возвращается корректная структура
+      expect(result).toHaveProperty("metadata");
+      expect(result).toHaveProperty("stats");
+      expect(result.stats).toHaveProperty("added");
+      expect(result.stats).toHaveProperty("modified");
+      expect(result.stats).toHaveProperty("deleted");
+      expect(result.stats).toHaveProperty("unchanged");
+
+      // Проверяем что stats содержит числа
+      expect(typeof result.stats.added).toBe("number");
+      expect(typeof result.stats.modified).toBe("number");
+      expect(typeof result.stats.deleted).toBe("number");
+      expect(typeof result.stats.unchanged).toBe("number");
+    });
+
+    it("должен корректно обрабатывать сценарий с существующим manifest", async () => {
+      // ARRANGE
+      const mockFiles = ["/project/src/test.ts"];
+      const mockManifest = {
+        files: {
+          "/project/src/test.ts": {
+            contentHash: "abc123",
+            chunkIds: ["chunk-1"],
+            mtime: 1234567890,
+          },
+        },
+        version: "1.0.0",
+      };
+      const mockMetadata = createMockMetadata({ totalChunks: 1 });
+
+      vi.mocked(findTypeScriptFiles).mockResolvedValue(mockFiles);
+      mockStoreMethods.getManifest.mockReturnValue(mockManifest);
+      mockStoreMethods.getMetadata.mockReturnValue(mockMetadata);
+
+      // ACT
+      const pipeline = new RAGPipeline();
+      const result = await pipeline.indexIncremental("/project", mockEmbeddingProvider);
+
+      // ASSERT - проверяем что метод успешно выполнился и вернул результат
+      expect(result).toBeDefined();
+      expect(result.metadata).toBeDefined();
+      expect(result.stats).toBeDefined();
+
+      // Проверяем что хотя бы getManifest был вызван (это первый шаг indexIncremental)
+      expect(mockStoreMethods.getManifest).toHaveBeenCalled();
     });
   });
 });

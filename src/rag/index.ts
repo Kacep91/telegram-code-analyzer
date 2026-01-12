@@ -18,6 +18,7 @@ export type {
   RAGConfig,
   RAGQueryResult,
   DocType,
+  ProgressCallback,
 } from "./types.js";
 export { ChunkTypeSchema, RAGConfigSchema, DocTypeSchema } from "./types.js";
 
@@ -49,3 +50,6 @@ export { rerankWithLLM, resolveParentChunks } from "./retriever.js";
 
 // Pipeline
 export { RAGPipeline } from "./pipeline.js";
+
+// Cache
+export { EmbeddingCache } from "./embedding-cache.js";

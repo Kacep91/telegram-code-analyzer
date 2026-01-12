@@ -56,9 +56,12 @@ telegram-code-analyzer/
 │   │   ├── 📄 chunker.ts       # Семантическое разбиение
 │   │   ├── 📄 store.ts         # Векторное хранилище
 │   │   ├── 📄 retriever.ts     # Поиск + ранжирование
-│   │   └── 📄 pipeline.ts      # Оркестратор
+│   │   ├── 📄 pipeline.ts      # Оркестратор
+│   │   └── 📄 embedding-cache.ts # LRU кеш для embeddings
 │   ├── 📂 llm/                 # 🤖 LLM провайдеры
-│   │   └── 📄 *.ts             # OpenAI, Gemini, Anthropic, Perplexity, Jina
+│   │   ├── 📄 *.ts             # OpenAI, Gemini, Anthropic, Perplexity, Jina
+│   │   ├── 📄 retry.ts         # Retry with exponential backoff
+│   │   └── 📄 fallback.ts      # Provider fallback chain
 │   ├── 📂 errors/              # ❌ Error handling
 │   │   ├── 📄 index.ts         # Error handling & messages
 │   │   └── 📄 types.ts         # Error type definitions
@@ -82,8 +85,15 @@ telegram-code-analyzer/
 | Parser | `rag/parser.ts` | AST парсинг TypeScript |
 | Chunker | `rag/chunker.ts` | Разбиение на чанки |
 | Store | `rag/store.ts` | Векторное хранилище |
-| Retriever | `rag/retriever.ts` | Поиск + ранжирование |
-| Pipeline | `rag/pipeline.ts` | Оркестратор |
+| Retriever | `rag/retriever.ts` | Поиск + ранжирование (batch size: 5) |
+| Pipeline | `rag/pipeline.ts` | Оркестратор (reranking timeout: 90s) |
+
+### Incremental Indexing
+
+Команда `/index` поддерживает инкрементальное индексирование:
+- По умолчанию переиндексируются только изменённые файлы
+- Обнаружение изменений через SHA256 хеши и mtime
+- `/index --full` — принудительное полное переиндексирование
 
 ## 🤖 LLM Providers
 
@@ -94,6 +104,22 @@ telegram-code-analyzer/
 | Jina | ✓ | ✗ |
 | Anthropic | ✗ | ✓ |
 | Perplexity | ✗ | ✓ |
+
+### Retry & Fallback
+
+- **`retryWithBackoff<T>(fn, options)`** — exponential backoff for all providers
+  - Options: `maxRetries` (3), `baseDelayMs` (1000), `maxDelayMs` (30000), `signal`, `onRetry`
+  - Retries on: 429, 500/502/503/504, timeouts, network errors
+- **`CompletionProviderWithFallback`** — tries providers in order until one succeeds
+  - Factory: `createFallbackProvider([provider1, provider2, ...])`
+- **CLI Fallback** — Claude Code CLI (haiku) used as primary provider when available
+  - Falls back to configured API provider (Perplexity, OpenAI, etc.)
+
+### Embedding Cache
+
+- LRU cache for query embeddings (`maxSize: 1000`)
+- Single-flight pattern prevents duplicate API calls
+- `getStats()` returns `{ size, hits, misses, hitRate }`
 
 ## ✅ Verification Checkpoints
 
@@ -217,6 +243,12 @@ tree -L 2 src/                             # Project structure
 - **grammY framework**: modern TypeScript-first approach
 - **Simple middleware**: only authorization and error handling
 - **File delivery**: sending detailed .md analyses as documents
+- **Auto-text handling**: users can send questions directly without /ask
+- **Progress animation**: 3-stage progress indicator during query processing
+- **InlineKeyboard**: buttons in /start command for quick navigation
+- **Graceful shutdown**: SIGINT/SIGTERM handling, waits for indexing to complete
+- **IndexingLock**: atomic lock prevents concurrent indexing (TOCTOU fix)
+- **All messages in English**: user-facing messages are in English
 
 ### Minimal Persistence
 

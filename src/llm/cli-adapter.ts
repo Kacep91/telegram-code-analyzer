@@ -40,6 +40,8 @@ export interface CLIAdapterConfig {
   readonly projectPath?: string | undefined;
   /** Timeout in milliseconds */
   readonly timeout?: number | undefined;
+  /** Model to use (e.g., 'haiku' for Claude Code CLI) */
+  readonly model?: string | undefined;
 }
 
 // =============================================================================
@@ -69,10 +71,12 @@ export class CLICompletionAdapter implements LLMCompletionProvider {
   private readonly cliTool: CLITool;
   private readonly projectPath: string;
   private readonly timeout: number;
+  private readonly model: string | undefined;
 
   constructor(config: CLIAdapterConfig) {
     this.projectPath = config.projectPath ?? DEFAULT_PROJECT_PATH;
     this.timeout = config.timeout ?? DEFAULT_CLI_TIMEOUT_MS;
+    this.model = config.model;
 
     // Create the appropriate CLI tool based on type
     switch (config.cliType) {
@@ -100,11 +104,10 @@ export class CLICompletionAdapter implements LLMCompletionProvider {
     prompt: string,
     _config?: Partial<ModelConfig>
   ): Promise<CompletionResult> {
-    const result = await this.cliTool.execute(
-      this.projectPath,
-      prompt,
-      this.timeout
-    );
+    const result = await this.cliTool.execute(this.projectPath, prompt, {
+      timeout: this.timeout,
+      model: this.model,
+    });
 
     // Estimate token count (rough approximation: 4 chars per token)
     const estimatedTokenCount = Math.ceil(result.output.length / 4);
@@ -112,7 +115,7 @@ export class CLICompletionAdapter implements LLMCompletionProvider {
     return {
       text: result.output,
       tokenCount: estimatedTokenCount,
-      model: `cli:${this.cliTool.name}`,
+      model: this.model ? `cli:${this.cliTool.name}:${this.model}` : `cli:${this.cliTool.name}`,
       finishReason: "stop",
     };
   }
@@ -152,11 +155,12 @@ export class CLICompletionAdapter implements LLMCompletionProvider {
  *
  * @param projectPath - Optional project path for CLI execution
  * @param timeout - Optional timeout in milliseconds
+ * @param model - Optional model to use (e.g., 'haiku' for Claude Code CLI)
  * @returns CLI completion adapter or null if no CLI is available
  *
  * @example
  * ```typescript
- * const adapter = await createCLICompletionAdapter();
+ * const adapter = await createCLICompletionAdapter(undefined, undefined, "haiku");
  * if (adapter) {
  *   const result = await adapter.complete("Hello!");
  * }
@@ -164,7 +168,8 @@ export class CLICompletionAdapter implements LLMCompletionProvider {
  */
 export async function createCLICompletionAdapter(
   projectPath?: string,
-  timeout?: number
+  timeout?: number,
+  model?: string
 ): Promise<CLICompletionAdapter | null> {
   // Try Claude Code CLI first (preferred)
   const claudeCLI = new ClaudeCodeCLI();
@@ -173,6 +178,7 @@ export async function createCLICompletionAdapter(
       cliType: "claude-code",
       projectPath,
       timeout,
+      model,
     });
   }
 
@@ -183,6 +189,7 @@ export async function createCLICompletionAdapter(
       cliType: "codex",
       projectPath,
       timeout,
+      // Note: model parameter is ignored for Codex CLI
     });
   }
 

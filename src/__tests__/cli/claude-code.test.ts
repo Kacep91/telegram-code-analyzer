@@ -238,7 +238,7 @@ describe("ClaudeCodeCLI", () => {
       const result = await cli.execute(
         "/test/project",
         "Analyze this code",
-        5000
+        { timeout: 5000 }
       );
 
       expect(result.output).toBe(expectedOutput);
@@ -283,7 +283,7 @@ describe("ClaudeCodeCLI", () => {
         const executePromise = cli.execute(
           "/test/project",
           "prompt",
-          TEST_TIMEOUT
+          { timeout: TEST_TIMEOUT }
         );
 
         // Add catch handler to prevent unhandled rejection warning
@@ -354,7 +354,7 @@ describe("ClaudeCodeCLI", () => {
       spawnMock.mockReturnValue(processEmitter as unknown as ChildProcess);
 
       const cli = new ClaudeCodeCLI();
-      const executePromise = cli.execute("/test/project", "test prompt", 5000);
+      const executePromise = cli.execute("/test/project", "test prompt", { timeout: 5000 });
 
       // Wait for async operations (validateProjectPath + findClaudeCommand)
       await new Promise((resolve) => setTimeout(resolve, 10));

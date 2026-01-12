@@ -2,7 +2,7 @@
  * OpenAI Codex CLI implementation
  */
 import { spawn } from "child_process";
-import type { CLITool, CLIToolResult, CodexMode } from "./types.js";
+import type { CLITool, CLIToolResult, CodexMode, CLIExecuteOptions } from "./types.js";
 import { validateProjectPath } from "./path-validator.js";
 
 const DEFAULT_TIMEOUT_MS = 300000; // 5 minutes
@@ -78,8 +78,11 @@ export class CodexCLI implements CLITool {
   async execute(
     projectPath: string,
     prompt: string,
-    timeout: number = DEFAULT_TIMEOUT_MS
+    options?: CLIExecuteOptions
   ): Promise<CLIToolResult> {
+    const timeout = options?.timeout ?? DEFAULT_TIMEOUT_MS;
+    // Note: model option is ignored for Codex CLI
+
     // Validate path is within allowed base directory (security check)
     await validateProjectPath(projectPath);
     this.validateApiKey();

@@ -180,6 +180,15 @@ class SimpleLimiter {
     return Math.max(0, resetTime - now);
   }
 
+  /**
+   * Returns wait time in seconds until next request is allowed
+   * @param userId - Telegram user ID
+   * @returns Wait time in seconds, 0 if user can make request immediately
+   */
+  public getWaitTime(userId: number): number {
+    return Math.ceil(this.getTimeUntilReset(userId) / 1000);
+  }
+
   private startCleanupTimer(): void {
     this.cleanupIntervalId = setInterval(() => {
       this.cleanup();

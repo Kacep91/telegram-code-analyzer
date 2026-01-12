@@ -1,5 +1,6 @@
 import { Middleware, Context } from "grammy";
 import { logger } from "./utils.js";
+import { SimpleLimiter } from "./validation.js";
 
 export interface AuthService {
   isAuthorized(userId: number): boolean;
@@ -26,12 +27,21 @@ export function createAuthService(
   };
 }
 
-export function authMiddleware(authService: AuthService): Middleware<Context> {
+export function authMiddleware(
+  authService: AuthService,
+  rateLimiter?: SimpleLimiter
+): Middleware<Context> {
   return async (ctx, next) => {
     const userId = ctx.from?.id;
 
     if (!userId || !authService.isAuthorized(userId)) {
       await ctx.reply("🚫 Access denied");
+      return;
+    }
+
+    if (rateLimiter && !rateLimiter.isAllowed(userId)) {
+      const waitSeconds = rateLimiter.getWaitTime(userId);
+      await ctx.reply(`⏳ Too many requests. Please wait ${waitSeconds} seconds.`);
       return;
     }
 

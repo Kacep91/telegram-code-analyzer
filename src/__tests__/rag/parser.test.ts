@@ -28,7 +28,23 @@ vi.mock("../../cli/path-validator.js", () => ({
   getAllowedBasePath: vi.fn(),
 }));
 
+// Mock TypeScript compiler functions to avoid slow createProgram() and getPreEmitDiagnostics()
+vi.mock("typescript", async () => {
+  const actual =
+    await vi.importActual<typeof import("typescript")>("typescript");
+  return {
+    default: {
+      ...actual,
+      createProgram: vi.fn(() => ({
+        getSourceFile: vi.fn(),
+      })),
+      getPreEmitDiagnostics: vi.fn(() => []),
+    },
+  };
+});
+
 import { readFile, readdir, stat } from "fs/promises";
+import ts from "typescript";
 import { parseTypeScriptFile, findTypeScriptFiles } from "../../rag/parser.js";
 import {
   validatePathWithinBase,
@@ -41,6 +57,7 @@ const mockReaddir = readdir as ReturnType<typeof vi.fn>;
 const mockStat = vi.mocked(stat);
 const mockValidatePathWithinBase = vi.mocked(validatePathWithinBase);
 const mockGetAllowedBasePath = vi.mocked(getAllowedBasePath);
+const mockGetPreEmitDiagnostics = vi.mocked(ts.getPreEmitDiagnostics);
 
 // =============================================================================
 // Test Fixtures - TypeScript Code Samples
@@ -376,6 +393,18 @@ describe("parser.ts", () => {
       it("should warn and return partial results for file with syntax errors", async () => {
         const filePath = "/project/src/broken.ts";
         setupParserMocks(FIXTURE_SYNTAX_ERROR, filePath);
+
+        // Make getPreEmitDiagnostics return syntax errors for this test
+        mockGetPreEmitDiagnostics.mockReturnValueOnce([
+          {
+            category: ts.DiagnosticCategory.Error,
+            code: 1005,
+            file: undefined,
+            start: undefined,
+            length: undefined,
+            messageText: "';' expected.",
+          },
+        ]);
 
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 

@@ -34,6 +34,14 @@ export {
   checkCLIAvailability,
 } from "./cli-adapter.js";
 export type { CLIAdapterConfig } from "./cli-adapter.js";
+export { retryWithBackoff, isRetryableError } from "./retry.js";
+export type { RetryOptions } from "./retry.js";
+export {
+  CompletionProviderWithFallback,
+  createFallbackProvider,
+} from "./fallback.js";
+export { withTimeout, DEFAULT_TIMEOUTS } from "./timeout.js";
+export type { TimeoutOptions, TimeoutType } from "./timeout.js";
 
 import type {
   LLMProviderType,

@@ -11,6 +11,7 @@ import type {
   FileEntry,
   IncrementalIndexResult,
   FileChanges,
+  ProgressCallback,
 } from "./types.js";
 import { MANIFEST_VERSION } from "./types.js";
 import type {
@@ -24,6 +25,8 @@ import { findDocumentFiles, parseMarkdownFile } from "./doc-parser.js";
 import { rerankWithLLM, resolveParentChunks } from "./retriever.js";
 import { RAGConfigSchema } from "./types.js";
 import { getConfigValue } from "../utils.js";
+import { EmbeddingCache } from "./embedding-cache.js";
+import { withTimeout, DEFAULT_TIMEOUTS } from "../llm/timeout.js";
 
 /** Index version for compatibility checking */
 const INDEX_VERSION = "1.1.0"; // Updated for ai-docs support
@@ -111,6 +114,7 @@ async function detectFileChanges(
 export class RAGPipeline {
   private readonly config: RAGConfig;
   private readonly store: CodeVectorStore;
+  private readonly embeddingCache = new EmbeddingCache();
   private allChunks: CodeChunk[] = [];
 
   /**
@@ -128,12 +132,14 @@ export class RAGPipeline {
    * @param projectPath - Absolute path to project root
    * @param embeddingProvider - Provider for generating embeddings
    * @param storePath - Optional directory path to save the index
+   * @param onProgress - Optional callback for progress updates during indexing
    * @returns Index metadata with statistics
    */
   async index(
     projectPath: string,
     embeddingProvider: LLMEmbeddingProvider,
-    storePath?: string
+    storePath?: string,
+    onProgress?: ProgressCallback
   ): Promise<ChunkMetadata> {
     console.log(`[RAG] Indexing project: ${projectPath}`);
 
@@ -205,6 +211,17 @@ export class RAGPipeline {
 
       const batchEmbeddings = await embeddingProvider.embedBatch(contents);
       embeddings.push(...batchEmbeddings.map((e) => [...e.values]));
+
+      // Report progress after each batch
+      if (onProgress) {
+        const processedChunks = Math.min(i + batchSize, chunks.length);
+        try {
+          await onProgress(processedChunks, chunks.length, "Indexing files");
+        } catch (err) {
+          // Don't let progress callback errors break indexing
+          console.warn("[RAG] Progress callback error:", err);
+        }
+      }
     }
 
     // Populate store (already cleared at method start)
@@ -317,12 +334,14 @@ export class RAGPipeline {
    * @param projectPath - Absolute path to project root
    * @param embeddingProvider - Provider for generating embeddings
    * @param storePath - Optional directory path to save the index
+   * @param onProgress - Optional callback for progress updates during indexing
    * @returns Incremental index result with stats
    */
   async indexIncremental(
     projectPath: string,
     embeddingProvider: LLMEmbeddingProvider,
-    storePath?: string
+    storePath?: string,
+    onProgress?: ProgressCallback
   ): Promise<IncrementalIndexResult> {
     console.log(`[RAG] Incremental indexing: ${projectPath}`);
 
@@ -345,7 +364,12 @@ export class RAGPipeline {
       console.log(
         `[RAG] Manifest version mismatch (${manifest.version} vs ${MANIFEST_VERSION}), forcing full reindex`
       );
-      const metadata = await this.index(projectPath, embeddingProvider, storePath);
+      const metadata = await this.index(
+        projectPath,
+        embeddingProvider,
+        storePath,
+        onProgress
+      );
       return {
         metadata,
         stats: { added: 0, modified: 0, deleted: 0, unchanged: 0 },
@@ -438,6 +462,17 @@ export class RAGPipeline {
         const contents = batch.map((c) => c.content);
         const batchEmbeddings = await embeddingProvider.embedBatch(contents);
         embeddings.push(...batchEmbeddings.map((e) => [...e.values]));
+
+        // Report progress after each batch
+        if (onProgress) {
+          const processedChunks = Math.min(i + batchSize, newChunks.length);
+          try {
+            await onProgress(processedChunks, newChunks.length, "Indexing files");
+          } catch (err) {
+            // Don't let progress callback errors break indexing
+            console.warn("[RAG] Progress callback error:", err);
+          }
+        }
       }
 
       this.store.addChunks(newChunks, embeddings);
@@ -515,8 +550,11 @@ export class RAGPipeline {
 
     console.log(`[RAG] Processing query: "${query.substring(0, 50)}..."`);
 
-    // Get query embedding
-    const queryEmbedding = await embeddingProvider.embed(query);
+    // Get query embedding (with caching and timeout)
+    const queryEmbedding = await withTimeout(
+      this.embeddingCache.getOrEmbed(query, embeddingProvider),
+      { timeoutMs: DEFAULT_TIMEOUTS.embedding, context: "Query embedding" }
+    );
 
     // Vector search
     const vectorResults = this.store.search(
@@ -524,6 +562,7 @@ export class RAGPipeline {
       this.config.topK
     );
     console.log(`[RAG] Vector search returned ${vectorResults.length} results`);
+    console.log(`[RAG] Starting LLM reranking...`);
 
     if (vectorResults.length === 0) {
       return {
@@ -534,19 +573,19 @@ export class RAGPipeline {
     }
 
     // LLM reranking
-    const rerankedResults = await rerankWithLLM(
-      vectorResults,
-      query,
-      completionProvider,
-      this.config
+    const rerankedResults = await withTimeout(
+      rerankWithLLM(vectorResults, query, completionProvider, this.config),
+      { timeoutMs: DEFAULT_TIMEOUTS.reranking, context: "LLM reranking" }
     );
     console.log(`[RAG] Reranked to ${rerankedResults.length} results`);
+    console.log(`[RAG] Resolving parent chunks...`);
 
     // Resolve parent chunks for additional context
     const resolvedResults = resolveParentChunks(
       rerankedResults,
       this.allChunks
     );
+    console.log(`[RAG] Parent chunks resolved, generating answer...`);
 
     // Generate answer
     const answer = await this.generateAnswer(
@@ -579,23 +618,31 @@ export class RAGPipeline {
       })
       .join("\n\n");
 
-    const prompt = `You are a code analysis assistant. Answer the user's question based on the code snippets provided.
+    const prompt = `You are a senior developer explaining this codebase to a technical colleague.
 
-USER QUESTION: ${query}
-
-RELEVANT CODE SNIPPETS:
+# CODE CONTEXT
 ${context}
 
-Instructions:
-- Provide a clear, concise answer based on the code snippets
-- Reference snippets by number [1], [2], etc. when relevant
-- If the snippets don't contain enough information to fully answer, say so
-- Focus on accuracy over speculation`;
+# INSTRUCTIONS
+1. Give a clear, technical answer without code snippets
+2. Use proper technical terminology (modules, handlers, pipelines, etc.)
+3. Reference specific files and components by name with line numbers where relevant
+4. Structure:
+   - **Summary**: Direct answer in 1-2 sentences
+   - **Details**: Technical explanation of the implementation
+   - **Components involved**: List relevant files/modules
+5. Be precise about data flow, dependencies, and architecture decisions
+6. If something is unclear from the provided context, state it explicitly
 
-    const result = await llm.complete(prompt, {
-      temperature: 0.3,
-      maxTokens: 2048,
-    });
+# USER QUESTION
+${query}
+
+# ANSWER`;
+
+    const result = await withTimeout(
+      llm.complete(prompt, { temperature: 0.3, maxTokens: 2048 }),
+      { timeoutMs: DEFAULT_TIMEOUTS.completion, context: "Answer generation" }
+    );
 
     return {
       text: result.text,
@@ -630,10 +677,19 @@ Instructions:
   }
 
   /**
+   * Get embedding cache statistics
+   * @returns Cache stats with size, hits, misses, and hit rate
+   */
+  getCacheStats(): { size: number; hits: number; misses: number; hitRate: number } {
+    return this.embeddingCache.getStats();
+  }
+
+  /**
    * Clear the current index
    */
   clear(): void {
     this.store.clear();
     this.allChunks = [];
+    this.embeddingCache.clear();
   }
 }

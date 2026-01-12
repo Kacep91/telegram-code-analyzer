@@ -1,8 +1,9 @@
 import type { CodeChunk, SearchResult, RAGConfig } from "./types.js";
 import type { LLMCompletionProvider } from "../llm/types.js";
+import { withTimeout } from "../llm/timeout.js";
 
 /** Batch size for parallel LLM scoring to avoid rate limits */
-const SCORING_BATCH_SIZE = 3;
+const SCORING_BATCH_SIZE = 5;
 
 /** Default score when LLM scoring fails */
 const DEFAULT_LLM_SCORE = 0.5;
@@ -12,6 +13,48 @@ const MAX_CONTENT_FOR_SCORING = 1000;
 
 /** Maximum query length to prevent abuse */
 const MAX_QUERY_LENGTH = 2000;
+
+/** Timeout for individual chunk scoring (15 seconds) */
+const CHUNK_SCORING_TIMEOUT_MS = 15000;
+
+/** Dynamic ranking weights based on query type */
+interface QueryWeights {
+  vectorWeight: number;
+  llmWeight: number;
+}
+
+/**
+ * Determine ranking weights based on query intent
+ *
+ * Search queries benefit from higher vector similarity weight (semantic match),
+ * while explanation queries benefit from higher LLM weight (understanding context).
+ *
+ * NOTE: These dynamic weights override the vectorWeight/llmWeight from RAGConfig.
+ * This is intentional - query-specific weights improve result quality.
+ *
+ * @param query - User query to analyze
+ * @returns Weights for vector and LLM scores
+ */
+function getQueryWeights(query: string): QueryWeights {
+  // Search-oriented patterns: user wants to find/locate specific code
+  // \b doesn't work with Cyrillic, so use word boundaries only for English
+  const searchPatterns =
+    /\b(find|where|locate|show me|get|search|look for)\b|найди|где|покажи/i;
+  if (searchPatterns.test(query)) {
+    return { vectorWeight: 0.6, llmWeight: 0.4 };
+  }
+
+  // Explanation-oriented patterns: user wants to understand code
+  // \b doesn't work with Cyrillic, so use word boundaries only for English
+  const explainPatterns =
+    /\b(explain|how|why|what does|describe)\b|объясни|как|почему|что делает/i;
+  if (explainPatterns.test(query)) {
+    return { vectorWeight: 0.2, llmWeight: 0.8 };
+  }
+
+  // Default balanced weights
+  return { vectorWeight: 0.3, llmWeight: 0.7 };
+}
 
 /**
  * Normalize unicode to ASCII where possible to prevent homoglyph attacks
@@ -141,10 +184,13 @@ Rate the relevance on a scale of 0 to 10, where:
 Respond with ONLY a number from 0 to 10, nothing else.`;
 
   try {
-    const result = await llm.complete(prompt, {
-      temperature: 0,
-      maxTokens: 10,
-    });
+    const result = await withTimeout(
+      llm.complete(prompt, {
+        temperature: 0,
+        maxTokens: 10,
+      }),
+      { timeoutMs: CHUNK_SCORING_TIMEOUT_MS, context: "Chunk scoring" }
+    );
 
     const score = parseScoreResponse(result.text);
 
@@ -181,16 +227,22 @@ export async function rerankWithLLM(
   llm: LLMCompletionProvider,
   config: RAGConfig
 ): Promise<readonly SearchResult[]> {
-  const { vectorWeight, llmWeight, rerankTopK } = config;
+  const { rerankTopK } = config;
 
   if (results.length === 0) {
     return [];
   }
 
+  // Use dynamic weights based on query intent instead of fixed config weights
+  const { vectorWeight, llmWeight } = getQueryWeights(query);
+
   const scoredResults: SearchResult[] = [];
 
   // Process in batches to avoid rate limits
+  const totalBatches = Math.ceil(results.length / SCORING_BATCH_SIZE);
   for (let i = 0; i < results.length; i += SCORING_BATCH_SIZE) {
+    const batchNum = Math.floor(i / SCORING_BATCH_SIZE) + 1;
+    console.log(`[RAG] Scoring batch ${batchNum}/${totalBatches}...`);
     const batch = results.slice(i, i + SCORING_BATCH_SIZE);
 
     const batchPromises = batch.map(async (result) => {

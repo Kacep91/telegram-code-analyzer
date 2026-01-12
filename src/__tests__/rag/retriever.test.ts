@@ -125,7 +125,7 @@ describe("rerankWithLLM", () => {
       expect(second?.llmScore).toBe(0.2); // 2/10
     });
 
-    it("should calculate final score using configured weights", async () => {
+    it("should calculate final score using dynamic weights based on query type", async () => {
       const results: SearchResult[] = [
         createMockSearchResult({
           chunk: createMockChunk({ id: "chunk-1" }),
@@ -142,6 +142,8 @@ describe("rerankWithLLM", () => {
         llmWeight: 0.6,
       });
 
+      // "test query" uses default weights (0.3 vector, 0.7 LLM)
+      // Note: dynamic weights override config weights
       const reranked = await rerankWithLLM(
         results,
         "test query",
@@ -149,10 +151,10 @@ describe("rerankWithLLM", () => {
         customConfig
       );
 
-      // finalScore = 0.4 * 0.8 + 0.6 * 0.6 = 0.32 + 0.36 = 0.68
+      // finalScore = 0.3 * 0.8 + 0.7 * 0.6 = 0.24 + 0.42 = 0.66
       const result = reranked[0];
       expect(result).toBeDefined();
-      expect(result?.finalScore).toBeCloseTo(0.68, 5);
+      expect(result?.finalScore).toBeCloseTo(0.66, 5);
     });
 
     it("should limit results to rerankTopK", async () => {

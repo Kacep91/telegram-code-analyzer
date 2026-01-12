@@ -69,7 +69,7 @@ export const RAGConfigSchema = z
     /** Overlap tokens between chunks */
     chunkOverlap: z.number().nonnegative().default(50),
     /** Number of candidates for vector search */
-    topK: z.number().positive().default(15),
+    topK: z.number().positive().default(10),
     /** Number of results after reranking */
     rerankTopK: z.number().positive().default(5),
     /** Weight for vector similarity score (0-1) */
@@ -159,3 +159,15 @@ export interface FileChanges {
 
 /** Manifest version for incremental indexing compatibility */
 export const MANIFEST_VERSION = "1.0.0";
+
+/**
+ * Progress callback for long-running indexing operations
+ * @param current - Current item number
+ * @param total - Total items to process
+ * @param stage - Description of current stage
+ */
+export type ProgressCallback = (
+  current: number,
+  total: number,
+  stage: string
+) => void | Promise<void>;

@@ -73,7 +73,7 @@ DEFAULT_LLM_PROVIDER=openai              # openai|gemini|anthropic|perplexity
 RAG_STORE_PATH=./rag-index              # Index storage path
 # RAG_CHUNK_SIZE=300                     # Tokens per chunk
 # RAG_CHUNK_OVERLAP=50                   # Overlap between chunks
-# RAG_TOP_K=15                           # Candidates for vector search
+# RAG_TOP_K=10                           # Candidates for vector search
 # RAG_RERANK_TOP_K=5                     # Final results after reranking
 # RAG_VECTOR_WEIGHT=0.3                  # Vector similarity weight
 # RAG_LLM_WEIGHT=0.7                     # LLM reranking weight
@@ -101,17 +101,20 @@ LOG_LEVEL=INFO                           # DEBUG|INFO|WARN|ERROR
 |---------|--------|-------------|
 | `/start` | Users | Welcome message and bot info |
 | `/help` | Users | Usage guide and available providers |
-| `/index` | **Admins only** | Index codebase for RAG search |
+| `/index` | **Admins only** | Index codebase (incremental by default) |
+| `/index --full` | **Admins only** | Force full reindexing |
 | `/ask <question>` | Users | RAG query to indexed codebase |
 | `/status` | Users | Show system status (index, provider) |
 
+**Note:** You can also just send a text message directly without `/ask` command.
+
 ### Analysis Modes
 
-**RAG Query** (`/ask`): Fast semantic search through indexed code
+**RAG Query** (`/ask` or direct text): Fast semantic search through indexed code
 ```
 /ask How does authentication work?
+How does authentication work?    # Same result, no command needed
 /ask Find all API endpoints
-/ask What validation is used?
 ```
 
 ## LLM Providers
@@ -134,6 +137,20 @@ LOG_LEVEL=INFO                           # DEBUG|INFO|WARN|ERROR
 | **Perplexity** | `sonar-pro` | `PERPLEXITY_API_KEY` | Web-augmented |
 
 > **Important**: Anthropic and Perplexity do NOT support embeddings. Use OpenAI, Gemini, or Jina for RAG indexing.
+
+### Retry & Fallback
+
+All providers support automatic retry with exponential backoff via `retryWithBackoff()`:
+- Retries on rate limits (429), server errors (500/502/503/504), timeouts, network errors
+- Default: 3 retries, 1-30s delay
+
+`CompletionProviderWithFallback` automatically tries the next provider on failure.
+
+**CLI Fallback**: When Claude Code CLI is available, it's used as primary provider (with Haiku model for speed), falling back to configured API provider.
+
+### Embedding Cache
+
+Query embeddings are cached in LRU cache (max 1000 entries) with single-flight deduplication to prevent duplicate API calls.
 
 ## How RAG Works
 
@@ -178,8 +195,15 @@ LOG_LEVEL=INFO                           # DEBUG|INFO|WARN|ERROR
 | Parser | `src/rag/parser.ts` | TypeScript AST parsing, entity extraction |
 | Chunker | `src/rag/chunker.ts` | Semantic code splitting with overlap |
 | Store | `src/rag/store.ts` | In-memory vector store, JSON persistence |
-| Retriever | `src/rag/retriever.ts` | Two-stage search: vector + LLM rerank |
-| Pipeline | `src/rag/pipeline.ts` | Orchestrates index/query operations |
+| Retriever | `src/rag/retriever.ts` | Two-stage search: vector + LLM rerank (batch size: 5, 15s timeout per chunk) |
+| Pipeline | `src/rag/pipeline.ts` | Orchestrates index/query operations (90s reranking timeout) |
+
+### Incremental Indexing
+
+By default, `/index` performs incremental indexing:
+- Only changed files are re-indexed (based on SHA256 hash and mtime)
+- Use `/index --full` for complete re-indexing
+- Statistics returned: added, modified, deleted, unchanged files
 
 ### Full Request Flow
 
@@ -305,6 +329,14 @@ Brief description...
 
 RAG finds both code and documentation — Claude compares and identifies discrepancies.
 
+## Features
+
+- **Graceful shutdown** - Bot handles SIGINT/SIGTERM, waits for indexing to complete before stopping
+- **Atomic indexing lock** - Prevents concurrent indexing operations (TOCTOU-safe)
+- **Progress animation** - 3-stage visual feedback during query processing
+- **InlineKeyboard** - Quick navigation buttons in /start command
+- **Auto-text handling** - Send questions directly without /ask command
+
 ## Tech Stack
 
 - **Runtime**: Node.js 18+
@@ -403,17 +435,20 @@ DEFAULT_LLM_PROVIDER=openai
 |---------|--------|----------|
 | `/start` | Пользователи | Приветствие и информация о боте |
 | `/help` | Пользователи | Справка и список провайдеров |
-| `/index` | **Только админы** | Индексация кодовой базы для RAG |
+| `/index` | **Только админы** | Индексация (инкрементальная по умолчанию) |
+| `/index --full` | **Только админы** | Принудительная полная переиндексация |
 | `/ask <вопрос>` | Пользователи | RAG-запрос к индексу |
 | `/status` | Пользователи | Статус системы (индекс, провайдер) |
 
+**Примечание:** Можно отправить текстовое сообщение напрямую без команды `/ask`.
+
 ### Режимы анализа
 
-**RAG-запрос** (`/ask`): Быстрый семантический поиск по индексу
+**RAG-запрос** (`/ask` или прямой текст): Быстрый семантический поиск по индексу
 ```
 /ask Как работает авторизация?
+Как работает авторизация?    # Тот же результат, команда не нужна
 /ask Найди все API endpoints
-/ask Какая валидация используется?
 ```
 
 ### LLM-провайдеры
@@ -436,6 +471,20 @@ DEFAULT_LLM_PROVIDER=openai
 | **Perplexity** | `sonar-pro` | `PERPLEXITY_API_KEY` | С веб-поиском |
 
 > **Важно**: Anthropic и Perplexity НЕ поддерживают embeddings. Используйте OpenAI, Gemini или Jina для индексации.
+
+#### Retry & Fallback
+
+Все провайдеры поддерживают автоматический retry с экспоненциальным backoff (`retryWithBackoff()`):
+- Retry на rate limits (429), серверных ошибках (500/502/503/504), таймаутах
+- По умолчанию: 3 попытки, задержка 1-30s
+
+`CompletionProviderWithFallback` автоматически переключается на следующего провайдера при ошибке.
+
+**CLI Fallback**: Если Claude Code CLI доступен, используется как основной провайдер (модель Haiku для скорости), с fallback на API-провайдер.
+
+#### Embedding Cache
+
+Query embeddings кешируются в LRU-кеше (max 1000) с single-flight дедупликацией для предотвращения дублирующих API-вызовов.
 
 ### Как работает RAG
 
@@ -479,6 +528,13 @@ finalScore = vectorWeight × vectorScore + llmWeight × llmScore
 ```
 
 LLM-ранжирование имеет больший вес для захвата семантической релевантности.
+
+### Инкрементальное индексирование
+
+По умолчанию `/index` выполняет инкрементальное индексирование:
+- Переиндексируются только изменённые файлы (по SHA256 хешу и mtime)
+- `/index --full` — полная переиндексация
+- Возвращается статистика: added, modified, deleted, unchanged файлы
 
 ### Поддержка документации (ai-docs/)
 

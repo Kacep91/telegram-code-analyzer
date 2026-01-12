@@ -178,7 +178,7 @@ describe("CodexCLI", () => {
       const resultPromise = cli.execute(
         validProjectPath,
         validPrompt,
-        shortTimeout
+        { timeout: shortTimeout }
       );
 
       // Don't emit close - let it timeout
