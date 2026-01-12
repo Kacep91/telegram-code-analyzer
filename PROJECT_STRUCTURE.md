@@ -1,14 +1,16 @@
 # 🤖 Telegram Code Analyzer - Project Structure
 
-Minimalist Telegram bot for codebase analysis using Claude Code CLI capabilities.
+Minimalist Telegram bot for codebase analysis using RAG (Retrieval-Augmented Generation) with multiple LLM providers.
 
 ## 🏗️ Architecture Overview
 
-Simple Telegram Bot with direct function calls and minimal abstractions.
+RAG-based Telegram Bot with semantic code search, LLM reranking, and provider fallback.
 
 ### Data Flow
 ```
-Telegram User → Auth Check → Claude CLI → File Response
+Telegram User → Auth Check → RAG Pipeline → LLM Completion → File Response
+                                 ↓
+                    Embedding → Vector Search → Reranking
 ```
 
 ### Technology Stack
@@ -16,10 +18,11 @@ Telegram User → Auth Check → Claude CLI → File Response
 - **Runtime**: Node.js 18+
 - **Language**: TypeScript
 - **Bot Framework**: grammY
-- **AI Integration**: Claude Code CLI
-- **Configuration**: dotenv
+- **LLM Providers**: OpenAI, Gemini, Anthropic, Perplexity, Jina
+- **CLI Integration**: Claude Code, Codex
+- **Configuration**: dotenv + Zod validation
 - **Testing**: Vitest
-- **Code Quality**: ESLint + Prettier
+- **Code Quality**: Prettier
 
 ## 📁 Project Structure
 
@@ -34,113 +37,151 @@ telegram-code-analyzer/
 ├── .prettierrc.json            # 🎨 Code formatting
 ├── CLAUDE.md                   # 🤖 AI Instructions
 ├── PROJECT_STRUCTURE.md        # 📋 This file
-├── SUGGESTIONS.md              # 💡 Project suggestions
 └── README.md                   # 📚 Installation guide
 ```
 
-### Source Code (`src/`) - **12 files total**
+### Source Code (`src/`)
 
 ```
 src/
-├── index.ts        (36 lines)  # 🚀 Application entry point
-├── bot.ts          (145 lines) # 🤖 Telegram bot handlers
-├── auth.ts         (34 lines)  # 🔐 User authorization
-├── claude.ts       (222 lines) # 🧠 Claude CLI integration
-├── utils.ts        (275 lines) # 🛠️ Utility functions
-├── validation.ts   (249 lines) # 🔒 Input validation & security
-├── types.ts        (227 lines) # 🏷️ TypeScript type definitions
-├── errors/
-│   ├── index.ts    (241 lines) # ❌ Error handling & messages
-│   └── types.ts    (164 lines) # 🏷️ Error type definitions
-└── __tests__/
-    ├── setup.ts    (15 lines)  # 🧪 Test configuration
-    ├── bot.integration.test.ts (248 lines) # 🤖 Bot integration tests
-    └── integration.test.ts (66 lines) # 🧪 Integration tests
+├── index.ts          (208 lines)  # 🚀 Application entry point
+├── bot.ts            (710 lines)  # 🤖 Telegram bot + handlers
+├── auth.ts           (50 lines)   # 🔐 Whitelist authorization
+├── claude.ts         (12 lines)   # 🧠 Claude CLI (deprecated)
+├── utils.ts          (642 lines)  # 🛠️ Utilities & config
+├── validation.ts     (268 lines)  # 🔒 Input validation & security
+├── types.ts          (144 lines)  # 🏷️ TypeScript types
+│
+├── errors/                        # ❌ Error handling
+│   └── index.ts      (423 lines)  # Error classes & messages
+│
+├── cli/                           # 🖥️ CLI adapters
+│   ├── index.ts      (91 lines)   # CLI orchestrator
+│   ├── claude-code.ts (363 lines) # Claude Code CLI adapter
+│   ├── codex.ts      (202 lines)  # Codex CLI adapter
+│   ├── path-validator.ts (144 lines) # Path validation
+│   └── types.ts      (36 lines)   # CLI type definitions
+│
+├── llm/                           # 🤖 LLM providers
+│   ├── index.ts      (511 lines)  # Provider factory & config
+│   ├── types.ts      (148 lines)  # LLM type definitions
+│   ├── base.ts       (156 lines)  # Base provider class
+│   ├── openai.ts     (296 lines)  # OpenAI provider
+│   ├── gemini.ts     (350 lines)  # Gemini provider
+│   ├── anthropic.ts  (257 lines)  # Anthropic provider
+│   ├── perplexity.ts (219 lines)  # Perplexity provider
+│   ├── jina.ts       (199 lines)  # Jina embeddings
+│   ├── cli-adapter.ts (227 lines) # CLI as LLM provider
+│   ├── retry.ts      (196 lines)  # Exponential backoff
+│   ├── fallback.ts   (143 lines)  # Provider fallback chain
+│   └── timeout.ts    (89 lines)   # Timeout wrapper
+│
+├── rag/                           # 🔍 RAG system
+│   ├── index.ts      (55 lines)   # RAG exports
+│   ├── types.ts      (173 lines)  # RAG type definitions
+│   ├── parser.ts     (276 lines)  # AST parser (TypeScript)
+│   ├── doc-parser.ts (222 lines)  # Documentation parser
+│   ├── chunker.ts    (329 lines)  # Semantic chunking
+│   ├── store.ts      (482 lines)  # Vector store (JSON)
+│   ├── retriever.ts  (323 lines)  # Search + reranking
+│   ├── pipeline.ts   (695 lines)  # RAG orchestrator
+│   └── embedding-cache.ts (102 lines) # LRU cache + single-flight
+│
+└── __tests__/                     # 🧪 Tests
+    ├── setup.ts                   # Test configuration
+    ├── bot.test.ts                # Bot tests
+    ├── auth.test.ts               # Auth tests
+    ├── utils.test.ts              # Utils tests
+    ├── errors.test.ts             # Error tests
+    ├── types.test.ts              # Type tests
+    ├── cli/                       # CLI tests
+    │   ├── index.test.ts
+    │   ├── claude-code.test.ts
+    │   ├── codex.test.ts
+    │   └── path-validator.test.ts
+    ├── llm/                       # LLM tests
+    │   ├── index.test.ts
+    │   ├── base.test.ts
+    │   ├── openai.test.ts
+    │   ├── gemini.test.ts
+    │   ├── anthropic.test.ts
+    │   ├── perplexity.test.ts
+    │   ├── jina.test.ts
+    │   ├── cli-adapter.test.ts
+    │   ├── retry.test.ts
+    │   └── fallback.test.ts
+    └── rag/                       # RAG tests
+        ├── parser.test.ts
+        ├── retriever.test.ts
+        ├── pipeline.test.ts
+        └── embedding-cache.test.ts
 ```
 
 ### Other Directories
 
 ```
-temp/                    # 📁 Analysis result files  
+temp/                    # 📁 Analysis result files
 ├── analysis-*.md        # Generated analyses
-└── .gitkeep            
+└── .gitkeep
+
+rag-index/               # 📊 RAG index storage
+└── rag-index.json       # Vector store data
 
 prompts/                 # 📝 Claude prompts
 └── code-analyzer.md     # Analysis instructions
-
-src/__tests__/           # 🧪 Integration and bot tests
-├── bot.integration.test.ts  # Comprehensive bot integration tests
-├── integration.test.ts      # End-to-end integration tests
-└── setup.ts                 # Test environment configuration
 ```
 
-## 🧩 File Descriptions
+## 🧩 Key Components
 
 ### **Core Files**
 
-#### `src/index.ts` (36 lines)
-Application entry point with configuration loading and bot initialization.  
+| File | Lines | Description |
+|------|-------|-------------|
+| `index.ts` | 208 | Entry point, graceful shutdown, indexing lock |
+| `bot.ts` | 710 | Telegram handlers, commands, progress animation |
+| `auth.ts` | 50 | Whitelist authorization |
+| `utils.ts` | 642 | Logging, file ops, config management |
+| `validation.ts` | 268 | Zod schemas, XSS prevention |
 
-#### `src/bot.ts` (145 lines)
-Telegram bot implementation with message handlers and command processing.
+### **LLM Layer**
 
-#### `src/auth.ts` (34 lines)
-User authorization system with whitelist-based access control.
+| File | Lines | Description |
+|------|-------|-------------|
+| `llm/index.ts` | 511 | Provider factory, multi-provider config |
+| `llm/retry.ts` | 196 | `retryWithBackoff()` - exponential backoff for 429/5xx/timeouts |
+| `llm/fallback.ts` | 143 | `CompletionProviderWithFallback` - tries providers in order |
+| `llm/timeout.ts` | 89 | `withTimeout()` - configurable operation timeouts |
+| `llm/cli-adapter.ts` | 227 | Uses Claude Code CLI as LLM provider |
 
-#### `src/claude.ts` (222 lines)
-Claude Code CLI integration with subprocess management and result processing.
+### **RAG System**
 
-#### `src/validation.ts` (249 lines)
-Input validation and security measures including XSS prevention and rate limiting.
-
-#### `src/utils.ts` (275 lines)
-Utility functions for logging, file operations, and configuration management.
-
-#### `src/types.ts` (227 lines)
-TypeScript type definitions for the application's data structures and interfaces.
-
-### **Additional Components**
-
-#### `src/errors/index.ts` (241 lines)
-Centralized error handling with localized messages and error recovery.
-
-#### `src/errors/types.ts` (164 lines)
-Error type definitions and classification system.
+| File | Lines | Description |
+|------|-------|-------------|
+| `rag/pipeline.ts` | 695 | RAG orchestrator, incremental indexing |
+| `rag/retriever.ts` | 323 | Vector search + LLM reranking (batch: 5) |
+| `rag/store.ts` | 482 | JSON-based vector store |
+| `rag/embedding-cache.ts` | 102 | LRU cache with single-flight deduplication |
+| `rag/parser.ts` | 276 | TypeScript AST parsing |
+| `rag/chunker.ts` | 329 | Semantic code chunking |
 
 ## 📊 Project Metrics
 
-| Component | Count | Lines |
+| Component | Files | Lines |
 |-----------|-------|-------|
-| **Total TypeScript Files** | 12 | ~1,922 |
-| **Core Source Files** | 7 | ~1,388 |
-| **Error Handling Files** | 2 | ~405 |
-| **Test Files** | 3 | ~329 |
-| **Configuration Files** | 9 | - |
+| **Core Source** | 7 | ~2,034 |
+| **CLI Adapters** | 5 | ~836 |
+| **LLM Providers** | 12 | ~2,791 |
+| **RAG System** | 9 | ~2,657 |
+| **Error Handling** | 1 | ~423 |
+| **Total Source** | 34 | ~8,741 |
 
 ## 🎯 Development Principles
 
-✅ **KISS (Keep It Simple, Stupid)** - Favor simple solutions over complex ones
-✅ **Security First** - Input validation and XSS prevention
-✅ **Type Safety** - Comprehensive TypeScript usage
-✅ **Testability** - Unit and integration test coverage
-✅ **Maintainability** - Clear code structure and documentation
-
-## 🔧 Configuration Files
-
-### `package.json`
-Project dependencies and scripts configuration.
-
-### `tsconfig.json`
-TypeScript compiler configuration with strict type checking.
-
-### `vitest.config.ts`
-Test framework configuration for unit and integration tests.
-
-### `.prettierrc.json`
-Code formatting rules and style configuration.
-
-### `.env`
-Environment variables for tokens, user authorization, and configuration.
+- **KISS + Occam's Razor** - Every entity must justify its existence
+- **Security First** - Input validation, whitelist auth, XSS prevention
+- **Type Safety** - Strict TypeScript, Zod runtime validation
+- **Resilience** - Retry with backoff, provider fallback, timeouts
+- **Testability** - Comprehensive test coverage
 
 ## 🚀 Development Commands
 
@@ -157,9 +198,9 @@ npm run lint:fix    # Auto-fix code formatting
 
 ## 🧪 Testing Strategy
 
-- **Unit Tests**: Individual component testing
-- **Integration Tests**: End-to-end workflow testing  
-- **Validation Tests**: Input security and validation
-- **Authentication Tests**: Authorization system testing
+- **Unit Tests**: Individual component testing (LLM, RAG, CLI)
+- **Integration Tests**: End-to-end workflow testing
+- **Resilience Tests**: Retry, fallback, timeout behavior
+- **Validation Tests**: Input security and Zod schema validation
 
 All tests use Vitest framework with TypeScript support.
